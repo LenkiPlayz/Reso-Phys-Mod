@@ -1,0 +1,5 @@
+// toolchain probe: proves a compute shader can be built into an AssetBundle and dispatched
+#pragma kernel Probe
+RWStructuredBuffer<float> _Out;
+[numthreads(64, 1, 1)]
+void Probe(uint3 id : SV_DispatchThreadID) { _Out[id.x] = id.x * 2.0; }

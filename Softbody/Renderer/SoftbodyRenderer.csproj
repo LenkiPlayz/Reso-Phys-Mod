@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    SoftbodyRenderer 0.9.0: a BepInEx 5 plugin for Resonite's Unity renderer (Renderite.Renderer, Unity 2019.4 Mono).
+    It lets Softbody's GPU path update a GPU-skinned mesh's vertex data in place (see README "Renderer patch").
+    Loaded by BepInExRenderer (Renderer\BepInEx\core), which RenderiteHook starts through Doorstop.
+    Install: Renderer\BepInEx\plugins\SoftbodyRenderer\SoftbodyRenderer.dll (Resonite closed).
+  -->
+  <PropertyGroup>
+    <!-- Renderite.Unity.dll is netstandard2.0, BepInEx 5.4 / HarmonyX 2.9 are net35; Unity 2019.4's Mono runs the .NET 4.x profile. -->
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <AssemblyName>SoftbodyRenderer</AssemblyName>
+    <RootNamespace>SoftbodyRenderer</RootNamespace>
+    <Version>0.9.2</Version>
+    <Product>SoftbodyRenderer</Product>
+    <Description>Renderer-side patch for Softbody: in-place vertex updates on GPU-skinned meshes.</Description>
+    <DebugType>embedded</DebugType>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Where Resonite is installed (trailing slash). Override with -p:ResonitePath=... -->
+    <ResonitePath Condition="'$(ResonitePath)' == ''">F:\SteamLibrary\steamapps\common\Resonite\</ResonitePath>
+    <RendererManaged>$(ResonitePath)Renderer\Renderite.Renderer_Data\Managed\</RendererManaged>
+    <RendererBepInEx>$(ResonitePath)Renderer\BepInEx\core\</RendererBepInEx>
+    <!-- BepInEx is parked (parked_addons, 2026-11-10): build against the parked copy (read only). -->
+    <RendererBepInEx Condition="!Exists('$(RendererBepInEx)BepInEx.dll') And Exists('$(MSBuildThisFileDirectory)..\..\parked_addons\Renderer\BepInEx\core\BepInEx.dll')">$(MSBuildThisFileDirectory)..\..\parked_addons\Renderer\BepInEx\core\</RendererBepInEx>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Everything is a reference only (Private=False): the renderer and BepInEx already load these. -->
+    <Reference Include="Renderite.Unity"><HintPath>$(RendererManaged)Renderite.Unity.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Renderite.Shared"><HintPath>$(RendererManaged)Renderite.Shared.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="System.Memory"><HintPath>$(RendererManaged)System.Memory.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(RendererManaged)UnityEngine.CoreModule.dll</HintPath><Private>False</Private></Reference>
+    <!-- Only for the compiler: Renderite.Unity.Helper.ToUnity has an overload on a ParticleSystem enum. -->
+    <Reference Include="UnityEngine.ParticleSystemModule"><HintPath>$(RendererManaged)UnityEngine.ParticleSystemModule.dll</HintPath><Private>False</Private></Reference>
+    <!-- BepInEx 5's BaseUnityPlugin derives from UnityEngine.MonoBehaviour through the UnityEngine facade (type forwards to CoreModule). -->
+    <Reference Include="UnityEngine"><HintPath>$(RendererManaged)UnityEngine.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="BepInEx"><HintPath>$(RendererBepInEx)BepInEx.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(RendererBepInEx)0Harmony.dll</HintPath><Private>False</Private></Reference>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,80 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Offline tests: the same Core code as the plugin, against the game's own Bepu build, plus checks of the
+       built plugin DLL (Cecil, the engine's weaver on a copy, the engine's compatibility hash). No Resonite needed. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <!-- a stackalloc inside a loop grows the stack until the method returns (0.11.2 crashed Resonite that way) -->
+    <WarningsAsErrors>$(WarningsAsErrors);CA2014</WarningsAsErrors>
+    <AssemblyName>Softbody.Tests</AssemblyName>
+    <RootNamespace>Softbody.Tests</RootNamespace>
+    <ResonitePath Condition="'$(ResonitePath)' == ''">F:\SteamLibrary\steamapps\common\Resonite\</ResonitePath>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+    <Compile Include="..\Core\Flesh\*.cs" Link="Core\Flesh\%(Filename)%(Extension)" />
+    <Compile Include="..\Core\Fluid\*.cs" Link="Core\Fluid\%(Filename)%(Extension)" />
+    <!-- The plugin's engine-matrix conversion (Elements.Core only), checked against the engine's own CPU skinning. -->
+    <Compile Include="..\Plugin\SkinMatrices.cs" Link="Plugin\SkinMatrices.cs" />
+    <!-- 0.9.0 GPU path: the engine-side partial encoder (Elements.Assets + Renderite.Shared only) and the renderer patch's
+         Unity-free spec (flags, IL skeleton), both run here against the game's own DLLs. -->
+    <Compile Include="..\Plugin\PartialEncode.cs" Link="Plugin\PartialEncode.cs" />
+    <Compile Include="..\Renderer\UploadPatchSpec.cs" Link="Renderer\UploadPatchSpec.cs" />
+    <!-- 0.16.0 GPU fluid: the renderer fork's engine-free side (channel, compiler, D3D11 driver, director), run here on
+         this machine's own GPU through SharpDX (the same 4.2.0 the renderer ships, from the local package cache). -->
+    <Compile Include="..\GpuFluid\Shared\*.cs" Link="GpuFluid\Shared\%(Filename)%(Extension)" />
+    <Compile Include="..\GpuFluid\D3D\*.cs" Link="GpuFluid\D3D\%(Filename)%(Extension)" />
+    <None Include="..\GpuFluid\Hlsl\FluidSim.hlsl" Link="FluidSim.hlsl" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpDX" Version="4.2.0" />
+    <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
+    <PackageReference Include="SharpDX.DXGI" Version="4.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Build the plugin first (its DLL is inspected by PluginCheck); nothing of it is referenced or copied. -->
+    <ProjectReference Include="..\Softbody.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <!-- And the renderer plugin (net472; its DLL is inspected by RendererCheck, nothing of it is referenced). -->
+    <ProjectReference Include="..\Renderer\SoftbodyRenderer.csproj" ReferenceOutputAssembly="false" Private="false" SkipGetTargetFrameworkProperties="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>PluginDll</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)..\bin\$(Configuration)\net10.0\Softbody.dll</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RendererDll</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)..\Renderer\bin\$(Configuration)\net472\SoftbodyRenderer.dll</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TestDataDir</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)data</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ResonitePath</_Parameter1>
+      <_Parameter2>$(ResonitePath)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Copied into this test's bin folder only (read from the game folder, never written to it). -->
+    <Reference Include="BepuPhysics"><HintPath>$(ResonitePath)BepuPhysics.dll</HintPath><Private>True</Private></Reference>
+    <Reference Include="BepuUtilities"><HintPath>$(ResonitePath)BepuUtilities.dll</HintPath><Private>True</Private></Reference>
+    <!-- Only for the upload benchmark: the engine's own mesh-buffer encoder (no FrooxEngine, no renderer). -->
+    <Reference Include="Elements.Core"><HintPath>$(ResonitePath)Elements.Core.dll</HintPath><Private>True</Private></Reference>
+    <Reference Include="Elements.Assets"><HintPath>$(ResonitePath)Elements.Assets.dll</HintPath><Private>True</Private></Reference>
+    <Reference Include="Renderite.Shared"><HintPath>$(ResonitePath)Renderite.Shared.dll</HintPath><Private>True</Private></Reference>
+    <!-- Only for PluginCheck: the same Cecil the engine's weaver uses. FrooxEngine itself is loaded at run time from the game folder (read-only). -->
+    <Reference Include="Mono.Cecil"><HintPath>$(ResonitePath)Mono.Cecil.dll</HintPath><Private>True</Private></Reference>
+  </ItemGroup>
+
+</Project>

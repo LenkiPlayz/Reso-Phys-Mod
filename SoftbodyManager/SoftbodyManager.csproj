@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SoftbodyManager</AssemblyName>
+    <RootNamespace>SoftbodyManager</RootNamespace>
+    <Version>1.2.0</Version>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- the test console links Manager.cs; keep its folder (and the publisher's, 1.1.0) out of this project -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**;publisher\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <!-- 1.1.0: where updates come from (owner/name of the GitHub repository) and the public key their signature must match
+       (made by publisher keygen); a manager built without them has no updates. make_friend_pack.py passes both files. -->
+  <PropertyGroup>
+    <UpdateRepoFile Condition="'$(UpdateRepoFile)' == ''">update-repo.txt</UpdateRepoFile>
+    <UpdateKeyFile Condition="'$(UpdateKeyFile)' == ''">update-key.pub.txt</UpdateKeyFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(UpdateRepoFile)" LogicalName="update-repo.txt" Condition="Exists('$(UpdateRepoFile)')" />
+    <EmbeddedResource Include="$(UpdateKeyFile)" LogicalName="update-key.pub.txt" Condition="Exists('$(UpdateKeyFile)')" />
+  </ItemGroup>
+
+</Project>

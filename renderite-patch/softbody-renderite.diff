@@ -1,0 +1,231 @@
+diff --git a/Renderite.Unity/Assets/AssetManager.cs b/Renderite.Unity/Assets/AssetManager.cs
+index 9df084d..44a86b8 100644
+--- a/Renderite.Unity/Assets/AssetManager.cs
++++ b/Renderite.Unity/Assets/AssetManager.cs
+@@ -33,6 +33,13 @@ namespace Renderite.Unity
+             }
+         }
+ 
++        // Softbody fork: a lookup that does not create the asset
++        public bool TryGetAsset(int id, out T asset)
++        {
++            lock (_instances)
++                return _instances.TryGetValue(id, out asset);
++        }
++
+         public void RemoveAsset(T asset)
+         {
+             lock (_instances)
+diff --git a/Renderite.Unity/Assets/Mesh/MeshAsset.cs b/Renderite.Unity/Assets/Mesh/MeshAsset.cs
+index f770795..49a45f4 100644
+--- a/Renderite.Unity/Assets/Mesh/MeshAsset.cs
++++ b/Renderite.Unity/Assets/Mesh/MeshAsset.cs
+@@ -17,6 +17,24 @@ namespace Renderite.Unity
+     {
+         static List<string> blendshapeNames = new List<string>();
+ 
++        // Softbody fork: the Softbody plugin (engine side) turns on its GPU path for skinned meshes only when this renderer can
++        // update them in place. It checks for this named event; the fork holds it open for the renderer's lifetime.
++        public const string SoftbodyHandshakeName = @"Local\Softbody.RendererPatch.SkinnedInPlace.v1";
++        static readonly System.Threading.EventWaitHandle softbodyHandshake;
++
++        static MeshAsset()
++        {
++            try
++            {
++                softbodyHandshake = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.ManualReset, SoftbodyHandshakeName);
++                Debug.Log("[Softbody fork] in-place skinned vertex updates enabled; handshake " + SoftbodyHandshakeName + " open");
++            }
++            catch (Exception ex)
++            {
++                Debug.LogWarning("[Softbody fork] could not open the Softbody handshake event: " + ex.Message);
++            }
++        }
++
+         public static string GetBlendshapeName(int index)
+         {
+             while (blendshapeNames.Count <= index)
+@@ -222,6 +240,112 @@ namespace Renderite.Unity
+             }
+         }
+ 
++        // ---- Softbody fork: in-place vertex updates of skinned meshes
++
++        static bool IsSkinnedStreamsOnly(MeshUploadHint hint)
++        {
++            if (!(hint[MeshUploadHint.Flag.Positions] || hint[MeshUploadHint.Flag.Normals] || hint[MeshUploadHint.Flag.Tangents]))
++                return false;
++
++            return !hint[MeshUploadHint.Flag.VertexLayout] && !hint[MeshUploadHint.Flag.SubmeshLayout] && !hint[MeshUploadHint.Flag.Geometry]
++                && !hint[MeshUploadHint.Flag.BindPoses] && !hint[MeshUploadHint.Flag.BoneWeights] && !hint[MeshUploadHint.Flag.Blendshapes]
++                && !hint[MeshUploadHint.Flag.Colors] && !hint[MeshUploadHint.Flag.UV0s] && !hint[MeshUploadHint.Flag.UV1s]
++                && !hint[MeshUploadHint.Flag.UV2s] && !hint[MeshUploadHint.Flag.UV3s] && !hint[MeshUploadHint.Flag.UV4s]
++                && !hint[MeshUploadHint.Flag.UV5s] && !hint[MeshUploadHint.Flag.UV6s] && !hint[MeshUploadHint.Flag.UV7s];
++        }
++
++        static int FormatSize(VertexAttributeFormat format)
++        {
++            switch (format.ToUnity())
++            {
++                case UnityEngine.Rendering.VertexAttributeFormat.Float32:
++                case UnityEngine.Rendering.VertexAttributeFormat.UInt32:
++                case UnityEngine.Rendering.VertexAttributeFormat.SInt32:
++                    return 4;
++                case UnityEngine.Rendering.VertexAttributeFormat.UInt8:
++                case UnityEngine.Rendering.VertexAttributeFormat.SInt8:
++                case UnityEngine.Rendering.VertexAttributeFormat.UNorm8:
++                case UnityEngine.Rendering.VertexAttributeFormat.SNorm8:
++                    return 1;
++                default:
++                    return 2;
++            }
++        }
++
++        /// <summary>Writes the flagged positions / normals / tangents from the buffer into the mesh through Unity's setters.
++        /// False (nothing written) when the buffer does not hold them as Float32.</summary>
++        unsafe bool TrySetSkinnedStreams(MeshBuffer buffer, UnityEngine.Mesh mesh, MeshUploadHint hint)
++        {
++            int offset = 0, posOffset = -1, normalOffset = -1, tangentOffset = -1;
++
++            for (int i = 0; i < buffer.VertexAttributeCount; i++)
++            {
++                var attribute = buffer.VertexAttributes[i];
++                bool float32 = attribute.format.ToUnity() == UnityEngine.Rendering.VertexAttributeFormat.Float32;
++
++                if (attribute.attribute == VertexAttributeType.Position && float32 && attribute.dimensions == 3)
++                    posOffset = offset;
++                if (attribute.attribute == VertexAttributeType.Normal && float32 && attribute.dimensions == 3)
++                    normalOffset = offset;
++                if (attribute.attribute == VertexAttributeType.Tangent && float32 && attribute.dimensions == 4)
++                    tangentOffset = offset;
++
++                offset += attribute.dimensions * FormatSize(attribute.format);
++            }
++
++            int stride = offset;
++            int count = buffer.VertexCount;
++
++            bool positions = hint[MeshUploadHint.Flag.Positions];
++            bool normals = hint[MeshUploadHint.Flag.Normals];
++            bool tangents = hint[MeshUploadHint.Flag.Tangents];
++
++            if ((positions && posOffset < 0) || (normals && normalOffset < 0) || (tangents && tangentOffset < 0))
++                return false;
++
++            var data = buffer.GetRawVertexBufferData();
++
++            if ((long)stride * count > data.Length)
++                return false;
++
++            fixed (byte* source = data)
++            {
++                if (positions)
++                    SetStream<UnityEngine.Vector3>(source, stride, posOffset, count, 12, 0, mesh);
++                if (normals)
++                    SetStream<UnityEngine.Vector3>(source, stride, normalOffset, count, 12, 1, mesh);
++                if (tangents)
++                    SetStream<UnityEngine.Vector4>(source, stride, tangentOffset, count, 16, 2, mesh);
++            }
++
++            return true;
++        }
++
++        static unsafe void SetStream<T>(byte* source, int stride, int offset, int count, int size, int which, UnityEngine.Mesh mesh)
++            where T : struct
++        {
++            var native = new NativeArray<T>(count, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
++
++            try
++            {
++                byte* target = (byte*)NativeArrayUnsafeUtility.GetUnsafePtr(native);
++
++                for (int v = 0; v < count; v++)
++                    UnsafeUtility.MemCpy(target + (long)v * size, source + (long)v * stride + offset, size);
++
++                if (which == 0)
++                    mesh.SetVertices(native);
++                else if (which == 1)
++                    mesh.SetNormals(native);
++                else
++                    mesh.SetTangents(native);
++            }
++            finally
++            {
++                native.Dispose();
++            }
++        }
++
+         void SanitizeSubmeshes()
+         {
+             // Clean out previous submeshes first
+@@ -259,6 +383,25 @@ namespace Renderite.Unity
+                 Debug.Log($"Uploading Mesh {AssetId} (first: {!firstUploadCompleted}): {meshBuffer}\nHint: " + uploadHint +
+                     "\nBounds: " + uploadData.bounds);
+ 
++            // Softbody fork: a vertex-streams-only update (positions / normals / tangents) of a skinned mesh goes into the
++            // existing mesh instead of destroying it. Unity's own setters place the data whatever stream split Unity chose for
++            // the skinned mesh, and bind poses, bone weights, blendshapes, submeshes and indices are left as they are.
++            if (mesh != null && lastIsSkinned && mesh.isReadable && firstUploadCompleted && IsSkinnedStreamsOnly(uploadHint)
++                && meshBuffer.VertexCount == mesh.vertexCount && TrySetSkinnedStreams(meshBuffer, mesh, uploadHint))
++            {
++                meshBuffer = null;
++
++                PackerMemoryPool.Instance.Return(uploadData);
++                uploadData = null;
++
++                var inPlace = new MeshUploadResult();
++                inPlace.assetId = AssetId;
++                inPlace.instanceChanged = false;
++
++                RenderingManager.Instance.SendAssetUpdate(inPlace);
++                yield break;
++            }
++
+             if (mesh != null && (!mesh.isReadable || lastIsSkinned || uploadHint[MeshUploadHint.Flag.BindPoses]))
+             {
+                 if (mesh)
+diff --git a/Renderite.Unity/RenderingManager.cs b/Renderite.Unity/RenderingManager.cs
+index 9ae65e2..697a0a4 100644
+--- a/Renderite.Unity/RenderingManager.cs
++++ b/Renderite.Unity/RenderingManager.cs
+@@ -124,6 +124,9 @@ namespace Renderite.Unity
+         FrameSubmitData _dataWithRenderTasks;
+ 
+         Dictionary<int, RenderSpace> _renderSpaces = new Dictionary<int, RenderSpace>();
++
++        // Softbody fork: the GPU fluid finds the plugin's fluid renderer among the render spaces' renderers
++        public IEnumerable<RenderSpace> RenderSpaces => _renderSpaces.Values;
+         Dictionary<int, LightsBufferRenderer> _lightBuffers = new Dictionary<int, LightsBufferRenderer>();
+ 
+         List<int> _spacesToRemove = new List<int>();
+@@ -494,6 +497,10 @@ namespace Renderite.Unity
+             else
+                 Input.UpdateStateDecoupled();
+ 
++            // Softbody fork: the GPU fluid reads the plugin's frame and queues its step on the render thread (which the
++            // asset integration below runs)
++            Softbody.FluidGpu.SoftbodyFluidHost.Update();
++
+             RunAssetIntegration();
+ 
+             // Check in case this didn't get to this part in the loop
+diff --git a/Renderite.Unity/Renderite.Unity.csproj b/Renderite.Unity/Renderite.Unity.csproj
+index 2a5bd04..4ef9150 100644
+--- a/Renderite.Unity/Renderite.Unity.csproj
++++ b/Renderite.Unity/Renderite.Unity.csproj
+@@ -35,4 +35,15 @@
+     <ProjectReference Include="..\Renderite.Shared\Renderite.Shared.csproj" />
+   </ItemGroup>
+ 
++  <!-- Softbody fork 0.16.0: the GPU fluid (its sources live in the Softbody plugin's folder, linked here). -->
++  <PropertyGroup>
++    <SoftbodyGpuFluid>$(MSBuildThisFileDirectory)..\..\Softbody\GpuFluid\</SoftbodyGpuFluid>
++  </PropertyGroup>
++  <ItemGroup Condition="Exists('$(SoftbodyGpuFluid)Unity\SoftbodyFluidHost.cs')">
++    <Compile Include="$(SoftbodyGpuFluid)Shared\*.cs" Link="Softbody\%(Filename)%(Extension)" />
++    <Compile Include="$(SoftbodyGpuFluid)D3D\*.cs" Link="Softbody\%(Filename)%(Extension)" />
++    <Compile Include="$(SoftbodyGpuFluid)Unity\*.cs" Link="Softbody\%(Filename)%(Extension)" />
++    <EmbeddedResource Include="$(SoftbodyGpuFluid)Hlsl\FluidSim.hlsl" LogicalName="Softbody.FluidGpu.FluidSim.hlsl" Link="Softbody\FluidSim.hlsl" />
++  </ItemGroup>
++
+ </Project>

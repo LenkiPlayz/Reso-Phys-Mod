@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Softbody</AssemblyName>
+    <RootNamespace>Softbody</RootNamespace>
+    <Version>0.1.0</Version>
+    <!-- Where Resonite is installed (trailing slash). Override with -p:ResonitePath=... -->
+    <ResonitePath Condition="'$(ResonitePath)' == ''">F:\SteamLibrary\steamapps\common\Resonite\</ResonitePath>
+    <!-- Set to true to copy the built DLL into rml_mods after building. Leave false: installing is a separate, asked-for step. -->
+    <CopyToMods Condition="'$(CopyToMods)' == ''">false</CopyToMods>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The offline test console project lives in tests/ and links Core/*.cs itself. -->
+    <Compile Remove="tests\**" />
+    <None Remove="tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compile-time only: RML itself is loaded by Resonite at runtime. -->
+    <PackageReference Include="ResoniteModLoader" Version="5.0.2" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- All game assemblies are references only (Private=False): the game already loads them. -->
+    <Reference Include="FrooxEngine"><HintPath>$(ResonitePath)FrooxEngine.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Elements.Core"><HintPath>$(ResonitePath)Elements.Core.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Elements.Assets"><HintPath>$(ResonitePath)Elements.Assets.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Renderite.Shared"><HintPath>$(ResonitePath)Renderite.Shared.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="BepuPhysics"><HintPath>$(ResonitePath)BepuPhysics.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="BepuUtilities"><HintPath>$(ResonitePath)BepuUtilities.dll</HintPath><Private>False</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="CopyToRmlMods" AfterTargets="Build" Condition="'$(CopyToMods)' == 'true'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ResonitePath)rml_mods" />
+    <Message Importance="high" Text="Copied $(TargetFileName) to $(ResonitePath)rml_mods" />
+  </Target>
+
+</Project>

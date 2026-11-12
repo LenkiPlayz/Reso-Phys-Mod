@@ -1,0 +1,26 @@
+# build output
+bin/
+obj/
+publish/
+.vs/
+*.user
+__pycache__/
+*.pyc
+
+# the flesh tests' avatar body is private and stays off GitHub
+Softbody/tests/data/
+
+# local clones and builds (see renderite-patch/README.md)
+RenderiteSrc/
+RenderiteFork/
+RendererSoftbody/
+
+# built shader bundles (SoftbodyShaders/build.ps1 makes them)
+*.bundle
+*.bundle.manifest
+
+# Unity
+**/Library/
+**/Temp/
+**/Logs/
+**/UserSettings/

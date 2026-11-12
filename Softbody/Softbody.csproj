@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Softbody 0.9.0: a FrooxEngine plugin (data model assembly) that adds the `Softbody` component and the `SoftbodyBrush` tool.
+    Loaded by Resonite with the launch option  -LoadAssembly Libraries/Softbody.dll  (see README).
+    No ResoniteModLoader dependency.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <!-- a stackalloc inside a loop grows the stack until the method returns (0.11.2 crashed Resonite that way) -->
+    <WarningsAsErrors>$(WarningsAsErrors);CA2014</WarningsAsErrors>
+    <!-- The assembly name is part of every saved/synced type name ([Softbody]Softbody.Softbody): never rename it. -->
+    <AssemblyName>Softbody</AssemblyName>
+    <RootNamespace>Softbody</RootNamespace>
+    <Version>0.27.0</Version>
+    <!-- 0.16.0: the GPU fluid's shared channel (GpuFluid/Shared) is compiled in as internal types -->
+    <DefineConstants>$(DefineConstants);SOFTBODY_PLUGIN</DefineConstants>
+    <Product>Softbody</Product>
+    <Description>Selective softbody component for Resonite (FrooxEngine plugin).</Description>
+    <!-- Symbols inside the DLL: there is no separate .pdb for the engine's startup weaver to read/rewrite. -->
+    <DebugType>embedded</DebugType>
+    <!-- Where Resonite is installed (trailing slash). Override with -p:ResonitePath=... -->
+    <ResonitePath Condition="'$(ResonitePath)' == ''">F:\SteamLibrary\steamapps\common\Resonite\</ResonitePath>
+    <!-- Set to true to copy the built DLL into Resonite\Libraries after building. Leave false: installing is a separate, asked-for step. -->
+    <CopyToLibraries Condition="'$(CopyToLibraries)' == ''">false</CopyToLibraries>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The offline tests live in tests/ and link Core/*.cs themselves; legacy/ is the old 0.1.0 RML mod, kept for reference only;
+         Renderer/ is the separate renderer-side plugin (SoftbodyRenderer, net472, built on its own). -->
+    <Compile Remove="tests\**;legacy\**;Renderer\**;GpuFluid\**" />
+    <None Remove="tests\**;legacy\**;Renderer\**;GpuFluid\**" />
+    <Compile Include="GpuFluid\Shared\FluidChannel.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- All game assemblies are references only (Private=False): the game already loads them. -->
+    <Reference Include="FrooxEngine"><HintPath>$(ResonitePath)FrooxEngine.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Elements.Core"><HintPath>$(ResonitePath)Elements.Core.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Elements.Data"><HintPath>$(ResonitePath)Elements.Data.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Elements.Assets"><HintPath>$(ResonitePath)Elements.Assets.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Renderite.Shared"><HintPath>$(ResonitePath)Renderite.Shared.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="BepuPhysics"><HintPath>$(ResonitePath)BepuPhysics.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="BepuUtilities"><HintPath>$(ResonitePath)BepuUtilities.dll</HintPath><Private>False</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="CopyToResoniteLibraries" AfterTargets="Build" Condition="'$(CopyToLibraries)' == 'true'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ResonitePath)Libraries" />
+    <Message Importance="high" Text="Copied $(TargetFileName) to $(ResonitePath)Libraries" />
+  </Target>
+
+</Project>
