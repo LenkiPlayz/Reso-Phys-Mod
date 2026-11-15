@@ -119,7 +119,7 @@ sealed partial class MainForm
         _setupFold = new PillButton { Kind = ButtonKind.Quiet, Text = "Show steps", Visible = false };
         _setupFold.Click += (_, _) => { _showSteps = !_showSteps; RefreshAll(log: false); };
         _stepInstall = NewStep("1", () => Install(Manager.Softbody));
-        _stepFork = NewStep("2", SetUpFork);
+        _stepFork = NewStep("2", ForkStep);
         _stepLaunch = NewStep("3", CopyLaunchOptions);
         _steps = Stack(Row(_stepInstall), Row(_stepFork), Row(_stepLaunch));
         _steps.Margin = new Padding(0, 6, 0, 0);
@@ -175,6 +175,8 @@ sealed partial class MainForm
             if (StartPosition == FormStartPosition.CenterScreen) CenterToScreen();
             _column.SizeChanged += (_, _) => FitHeight();
             if (!Offline) _ = CheckForUpdates(log: true);
+            // 1.2.0: a manager from before 1.2.0 applied an update with renderer files it did not know (0.27.0: the smoke shader)
+            if (!Offline && Manager.PackLacks(_paths).Count > 0) _ = RepairFork(auto: true);
         };
     }
 
@@ -254,13 +256,17 @@ sealed partial class MainForm
         var (forkOk, forkText) = gameOk ? Manager.ForkStatus(_paths) : (false, "Resonite was not found");
         string mismatch = gameOk ? Manager.PackRendererMismatch(_paths) : "Resonite was not found";
         bool forkThere = Directory.Exists(_paths.Fork);
+        // 1.2.0: the fork is fine but lacks a renderer file the pack lists (0.27.0: the smoke shader): Repair puts it in
+        var lacks = gameOk && !forkOk && mismatch == null ? Manager.RepairNeeded(_paths) : new List<string>();
+        bool repair = lacks.Count > 0;
         SetStep(_stepFork, forkOk ? StepState.Done : !forkThere && mismatch == null ? StepState.Todo : StepState.Attention,
-            forkOk ? "The renderer fork is ready" : forkThere ? "Set up the renderer fork again" : "Set up the renderer fork",
+            forkOk ? "The renderer fork is ready" : repair ? "Finish the renderer fork" : forkThere ? "Set up the renderer fork again" : "Set up the renderer fork",
             forkOk ? "" :
             mismatch != null ? Capital(mismatch) + "." :
+            repair ? RepairText(lacks, Manager.PackLacks(_paths).Count > 0) :
             forkThere ? Capital(forkText) + "." :
             "Copies your Resonite renderer (about 220 MB) and puts the Softbody patch in the copy: soft avatars and the GPU liquid need it. Your Resonite itself is not changed.",
-            forkOk ? "Set up again" : "Set up", can && mismatch == null, forkOk);
+            forkOk ? "Set up again" : repair ? "Repair" : "Set up", can && mismatch == null, forkOk);
 
         var (hasPlugin, hasRenderer) = Manager.HasNeeded(_paths, _launchOptions);
         bool launchOk = hasPlugin && hasRenderer;
@@ -299,6 +305,15 @@ sealed partial class MainForm
             _rmlButton.Enabled = can;
         }
         _checkButton.Enabled = !_checking && !_busy && !Offline;
+    }
+
+    /// <summary>1.2.0: step 2 when the fork lacks a renderer file the pack lists.</summary>
+    static string RepairText(List<string> lacks, bool download)
+    {
+        bool smoke = lacks.Count == 1 && lacks[0].Contains("smoke", StringComparison.OrdinalIgnoreCase);
+        string it = lacks.Count == 1 ? "it" : "them";
+        return $"It lacks {Manager.Describe(lacks)}" + (smoke ? ", so smoke shows as plain discs" : "") + ". " +
+               (download ? $"Repair downloads {it} from Lenki's release and puts {it} in." : $"Repair puts {it} in from this pack.");
     }
 
     void SetStep(Step s, StepState state, string title, string text, string button, bool enabled, bool quiet)

@@ -113,8 +113,15 @@ about half a minute).
   (sigma = -ln(1 - alpha) / 2r, times its volume) over the 8 cells around it on a hashed grid (262,144 cells of 0.72 of the
   largest emitter's mean puff size, so a line through a puff reads back about its own optical depth); `GasBucketScan` turns the
   buckets into starts; `GasDrawQuads` writes each puff far to near, with the light reaching it (a march of 12 steps, each a
-  quarter longer, towards the main light; 0.65 e^-tau + 0.35 e^-0.3 tau, a little light scattered on) and the sky reaching it
-  (6 steps up); `GasTailQuads` clears what is past it. Without the shader the discs are drawn as before.
+  quarter longer, towards the main light) and the sky reaching it (6 steps up); `GasTailQuads` clears what is past it. Without the
+  shader the discs are drawn as before.
+  - **Tuning (from the previews):** first try, the plain e^-tau of a dense plume (900 puffs) left half its puffs under 0.1 % of the
+    light and every sky term at its floor: a dark grey smudge. Now each puff counts 0.6 of a full sphere of its opacity (the
+    shader draws it softer: `GAS_DRAWN_SHARE`), and the shading sees a quarter of the optical depth (white smoke scatters on most
+    of the light it stops: `GAS_SCATTER`): light 0.6 e^-tau + 0.4 e^-tau/4, sky 0.4 + 0.6 e^-tau. In that plume the bottom third
+    now gets 0.08 of a light from above and the top third 0.39.
+  - **Wisps:** the noise eats into each puff from its edge (where it is low the thin outer parts go, the middle stays), at about
+    5 noise cells across a puff; multiplying by it (the first try) averaged away over hundreds of overlapping puffs.
 - **The vertex** (56 bytes, the gas's and the foam's): position (the centre), normal (radius, light, sky), colour (rgb, opacity),
   texcoord0 (corner, a random number from its slot, its age as a share of its life). The foam's quads are unshaded (light and
   sky 1). A switch between discs and quads clears the index buffer.
@@ -125,7 +132,60 @@ about half a minute).
 - **Nothing in the plugin changed** (no new fields, same compatibility hash): friends without the new fork see the old discs.
 - **Tests** (`smoke`, also at the end of `gas`; the foam's in `foam`): quads hold their centre, radius, light, sky, colour, corner,
   random number and age; far to near from the head; light from above shades the bottom of a column (and from below the top);
-  no main light, no shading; discs then quads leave no disc indices; the foam as quads.
+  no main light, no shading; discs then quads leave no disc indices; the foam as quads. RTX 4070 (with a game open): 849 puffs
+  with their density grid, order and shading in 0.21 ms of GPU a frame, every quad in order.
+- **The build:** 112 variants (56 for single-pass stereo), no shader warnings; the bundle is 130 KB.
+- **Not verified in game yet:** that the bundle (Unity 2019.4.31) loads in the game's 2019.4.19 renderer, that single-pass stereo
+  draws both eyes right, Resonite's ambient (its skybox's spherical harmonics) on the smoke, and the depth texture's soft edges.
+  (It did not draw at all in game: see 0.29.2 below.)
+
+## 0.29.2: the smoke shader on the game's renderer
+
+Tried in game on 2026-11-12 at 22:53, with 0.29.0. The bundle loaded and the fork logged "smoke shader loaded". Then Direct3D
+refused every program: "D3D shader create error for vertex shader [0x80070057]", then "ShaderProgram is unsupported, but because
+jobified rendering is enabled the ShaderProgram can not be removed." on every frame that drew smoke. By 00:47 that was 1.2 million
+lines and a 168 MB Player.log, and no smoke showed.
+
+- **Why:** Unity puts a small header before the DXBC container in each D3D11 program's code.
+  - The editor that builds the bundle, 2019.4.31, writes version 2: the byte 2, five bytes as before, then 32 more bytes (all zero
+    here).
+  - The game's renderer, 2019.4.19, knows only version 1: the byte 1, the same five bytes, then the DXBC. All of the roughly 10,900
+    programs in its own resources.assets look like that.
+  - So it handed Direct3D the 32 zero bytes as the start of each shader.
+  - Nothing else differs:
+    - the Shader, Material and Texture3D type trees hash the same;
+    - the bind info after the code reads the same;
+    - each program's DXBC creates on D3D11 when passed in directly.
+  - Read the way 2019.4.19 reads them, all 112 programs fail with 0x80070057 offline too, the game's error.
+- **The fix:** `SoftbodyShaders\fix_d3d11_programs.py` rewrites each program to version 1. It drops the 32 bytes (which must be
+  zero) and shortens the code and its sub-program by 32. Then it rebuilds the blob's table, recompresses the blob (LZ4), and writes
+  the bundle back.
+  - It stops on anything it doesn't recognise, and leaves version 1 programs alone, so running it twice changes nothing.
+  - `build.ps1` runs it after every build. `make_softbody_renderer.py` refuses a bundle that still needs it.
+  - Checked:
+    - rewriting with nothing to change gives back the same file;
+    - after the rewrite, all 112 programs (56 vertex, 56 pixel) create on D3D11 the way 2019.4.19 reads them.
+  - The bundle is now 168 KB (plain LZ4 instead of Unity's LZ4HC).
+- **The fallback (fork), `GpuFluid/Unity/SmokeSelfTest.cs`:**
+  - Before using the shader, the fork draws one test puff with a copy of the smoke material into a 32 x 32 render texture. A
+    camera of its own sits far below the world and sees only the renderer's Temp layer, which no other camera draws.
+  - It reads the picture back: the middle should hold the puff's opacity (0.5), the corners nothing. Only then does the fork use
+    the shader. Otherwise the gas and foam keep the Unlit discs, and the log says why.
+  - After that it watches the log. If the renderer reports that it could not make one of the shader's programs (a variant the
+    test didn't draw, such as a stereo one), the fork goes back to the discs for the session (`DropSmoke`).
+  - The editor showed that the "D3D shader create error" line only goes to the log file: scripts never see it. In game the watch
+    relies on the "ShaderProgram is unsupported" line, which Unity logs as an error with a file and line, the kind scripts do get.
+    Not yet seen working.
+  - The cost: one 32 x 32 render and its read-back, once a session, when a world first has gas or foam.
+- **Checked in the 2019.4.31 editor** (`build.ps1 -Check "a;b;c"`, with the fork's own test):
+  - the bundle as built: test puff 0.49, corners 0.00 (2019.4.31 knows version 2);
+  - rewritten: 0.49 and 0.00 (2019.4.31 reads version 1 too, and takes the LZ4 the script writes);
+  - a copy with the version byte set to 1 but the 32 bytes kept (what the game's renderer sees): 0.00. The editor logged the
+    game's own "D3D shader create error ... [0x80070057]" lines, and the test failed as it should.
+- **Not verified in game yet:** the smoke drawing in the game's renderer, in both eyes. The fork logs the test's result
+  ("smoke shader loaded ...; test puff: ...").
+- Nothing in the plugin changed, so the hash is unchanged. The fork and the bundle go together: `make_softbody_renderer.py` copies
+  both.
 
 ## Later
 

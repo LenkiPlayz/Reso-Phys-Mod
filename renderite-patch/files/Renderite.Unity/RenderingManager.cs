@@ -500,6 +500,11 @@ namespace Renderite.Unity
             // Softbody fork: the GPU fluid reads the plugin's frame and queues its step on the render thread (which the
             // asset integration below runs)
             Softbody.FluidGpu.SoftbodyFluidHost.Update();
+#if SOFTBODY_GI
+            // Softbody fork (GI build): the live bounce light's settings and its sweep over the renderers (it draws its slab of the
+            // world into voxels at the end of the frame: a camera draw here would wait for the screen, see SoftbodyGIHost)
+            Softbody.GI.SoftbodyGIHost.Update();
+#endif
 
             RunAssetIntegration();
 

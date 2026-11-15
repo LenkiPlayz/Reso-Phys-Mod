@@ -52,6 +52,13 @@ namespace Softbody.FluidGpu
         /// tolerance a full warm start (SPlisHSPlasH's 1) fed back what each solve leaves of a rigid spin: a spinning thick blob spun
         /// up 3x in 3 s (SoftbodyRnD). Half keeps the spin (x1.01) for the same iterations as a 10x tighter tolerance. 0: none.</summary>
         public float ImplicitWarmStart = 0.5f;
+        /// <summary>Thick grip (fork, 2026-11-14): a thick liquid grips colliders inside its viscosity solve. A particle touching one has
+        /// its slide along it, against the shape's own motion, held back by dt x this x nu / size² (implicitly, so any value is
+        /// stable), and VelocityB's friction works against the shape's motion too. Until then (0: off) only VelocityB's 30/s friction
+        /// acted, after the solve, towards standing still; the next solve spread it over the liquid as a mild drag, so a thick liquid
+        /// slid along floors and down slopes like a block on ice (at Viscosity 15 a 20 cm cube slid 1.1 m down a 30 degree ramp in
+        /// 4 s; 20 slid further). 2, 8 and 32 measured the same (no slip); 8 is well past that. "thick-honey" measures it.</summary>
+        public float ThickWallGrip = 8f;
         public int Capacity = 65536;
         public int MaxSources = 1024;
         public int MaxShapes = 8192;
@@ -167,7 +174,7 @@ namespace Softbody.FluidGpu
         public uint V0x, V0y, V0z, V0w;      // 0.27.0 vortex particles
         public Vector4 V1;                   // 0.27.0 vortex particles
         public Vector4 I0;                   // 0.27.0 implicit viscosity: dt, tolerance, 0.01 h², the warm start's share
-        public uint I1x, I1y, I1z, I1w;      // 0.27.0 implicit viscosity: unused, most iterations, unused, unused
+        public uint I1x, I1y, I1z, I1w;      // 0.27.0 implicit viscosity: unused, most iterations, (thick grip) the wall grip as float bits, unused
         public Vector4 S0;                   // 0.27.0 smoke shader: towards the main light (0: none), w 1: the gas as quads
         public Vector4 S1;                   // 0.27.0 smoke shader: the density grid's cell, self-shadow strength, 1: foam as quads, unused
     }
@@ -362,6 +369,7 @@ namespace Softbody.FluidGpu
             _pos2 = Structured(null, n, 16, true); _vel2 = Structured(null, n, 16, true); _pred2 = Structured(null, n, 16, true);
             BindParticles();
             Structured("Delta", n, 16, true); Structured("Vtmp", n, 16, true); Structured("Contact", n, 16, true); Structured("Lambda", n, 4, true);
+            _res["ContactR"] = _res["Contact"];   // thick grip: the same buffer, read-only (the solve's matrix product has 8 UAVs)
             Structured("Keys", n, 4, true); Structured("Order", n, 4, true);
             Structured("Nbr", n * MaxNb, 4, true); Structured("NbCount", n, 4, true);
             Structured("Rad", n, 4, true);
@@ -905,14 +913,45 @@ namespace Softbody.FluidGpu
         // ------------------------------------------------------------------ 0.27.0: the thick liquid (Weiler et al. 2018)
 
         /// <summary>0.27.0: a thick liquid's Viscosity is held to this. Above it the solve's iterations climb steeply (at 2.5 cm
-        /// particles about 31 a solve at 15 and 100 at 20: SoftbodyRnD's RND-REPORT.md, section 6).</summary>
+        /// particles about 31 a solve at 15 and 100 at 20: SoftbodyRnD's RND-REPORT.md, section 6). 0.29.2: held to 15 at every
+        /// particle size; with the viscosity in proportion to the size, 15 takes about 18 iterations at 7.5 cm, 13 at 15 cm, 45 at
+        /// 1.25 cm and 69 at 0.5 cm (the iterations follow nu dt / h², here 1 / size). Thick grip (2026-11-14): 20, the top of
+        /// the range. The grip's wall rows steady the solve near walls: 20 takes about 60 iterations a solve in the small dam break at
+        /// 2.5 cm (98 without the grip), but 107 in a 43,000-particle pool: 31 ms of GPU a frame on an RTX 4070, against 12 at 15
+        /// and 4 as water ("thick-cost").</summary>
         public const float ThickViscosityCap = FluidChannel.ThickViscosityCap;
 
-        /// <summary>0.27.0: the kinematic viscosity (m²/s) a thick liquid's Viscosity value gives: none (XSPH) at 1 and under, then a
-        /// log scale from 0.001 m²/s (glycerine) just over 1, 0.08 at 10 and 0.9 at 15 (to 10 m²/s at 20, past the cap); honey
-        /// (about 0.004 m²/s) is about 4.</summary>
+        /// <summary>0.27.0: the kinematic viscosity (m²/s) a thick liquid's Viscosity value gives at 2.5 cm particles: none (XSPH) at 1
+        /// and under, then a log scale from 0.001 m²/s (glycerine) just over 1, 0.08 at 10, 0.9 at 15 and 10 m²/s at 20 (past
+        /// 15 only since the thick grip); honey (about 0.004 m²/s) is about 4. 0.29.2: other sizes scale it (<see cref="ThickViscosity"/>).</summary>
         public static float KinematicViscosity(float viscosity) =>
             viscosity > 1f ? (float)Math.Pow(10.0, -3.0 + 4.0 * Math.Min(19.0, viscosity - 1.0) / 19.0) : 0f;
+
+        /// <summary>0.29.2 (fork): the particle size the thick liquid's mapping was made at (its tests' 2.5 cm).</summary>
+        public const float ThickReferenceSize = 0.025f;
+
+        /// <summary>
+        /// 0.29.2 (fork): a thick liquid's viscosity grows with the particle size to this power, so the same Viscosity looks about as
+        /// thick at any size. Until 0.29.1 it was the same at every size (power 0), and a world built for 7.5 cm particles (bigger
+        /// flows) ran far runnier: ThickLiquid on was runnier there than off (XSPH grows with the size), so it "didn't do much".
+        /// Similarity alone (Froude and Reynolds) asks for 1.5, but the solver's 30/s drag at colliders and its per-substep pressure
+        /// damping already thicken bigger scenes. Fitted ("thick-size", "thick-size-fit"): a dam break scaled with the particle
+        /// size, its front and height against 2.5 cm's at Viscosity 6 to 15 and 5, 7.5 and 15 cm; 0.9 to 1 fit best (rms 21 to
+        /// 23 mm over k, against 72 mm at 0 and 53 mm at 1.5). DESIGN-fluid.md, "0.29.2: the thick liquid at any particle size".
+        /// Thick grip (2026-11-14): 1.5. The grip makes the walls no-slip, which is scale-free, so similarity's 1.5 fits now
+        /// ("thick-size-grip", Viscosity 6 to 20): rms 17 to 35 mm over k at 1.25 to 15 cm (power 1: 29 to 71 mm), the worst 31 to
+        /// 63 mm (power 1: 73 to 176). DESIGN-fluid.md, "Thick grip and Viscosity 20".
+        /// </summary>
+        public const float ThickSizePower = 1.5f;
+
+        /// <summary>0.29.2 (fork): a thick liquid's kinematic viscosity (m²/s) at a particle size: its Viscosity held to the cap, then
+        /// <see cref="KinematicViscosity"/> times (size / 2.5 cm) to <paramref name="sizePower"/>.</summary>
+        public static float ThickViscosity(float viscosity, float particleSize, float sizePower = ThickSizePower, float cap = ThickViscosityCap)
+        {
+            float nu = KinematicViscosity(Math.Min(viscosity, cap));
+            float s = float.IsNaN(particleSize) || !(particleSize > 0f) ? ThickReferenceSize : particleSize;
+            return sizePower == 0f || nu == 0f ? nu : nu * (float)Math.Pow(s / ThickReferenceSize, sizePower);
+        }
 
         bool _ivAllocated, _hasThick;
         int _ivNeeded = -1;
@@ -938,6 +977,7 @@ namespace Softbody.FluidGpu
             int iters = _ivNeeded < 0 ? max : Math.Min(max, Math.Max(8, _ivNeeded + 8 + _ivNeeded / 4));
             _p.I0 = new Vector4(dt, Math.Max(1e-6f, Config.ImplicitTolerance), 0.01f * H * H, Math.Max(0f, Math.Min(1f, Config.ImplicitWarmStart)));
             _p.I1y = (uint)max;
+            _p.I1z = BitConverter.ToUInt32(BitConverter.GetBytes(Math.Max(0f, Config.ThickWallGrip)), 0);   // thick grip
             UpdateParams();
             RunIndirect("IvBegin", 0);
             RunIndirect("IvDiagonal", 0);
@@ -1224,6 +1264,7 @@ namespace Softbody.FluidGpu
                 if (spawnCount > 0 || trim || _wakeAll) _lastWakeFrame = _frame;
                 float h = hFix;
                 _p.F1.W = h;
+                _p.I1z = BitConverter.ToUInt32(BitConverter.GetBytes(Math.Max(0f, Config.ThickWallGrip)), 0);   // thick grip (VelocityB reads it too)
                 _p.F3.Z = dt;
                 _buildTime += dt;
                 _p.U1x = 0; _p.U1y = (uint)Math.Max(0, Math.Min(spawnCount, Config.Capacity)); _p.U3z = 0;

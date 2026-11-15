@@ -27,8 +27,35 @@ sealed class PackManifest
     public string ManagerSha256 { get; set; }
     /// <summary>1.1.0: what is new, in a line or two.</summary>
     public string Notes { get; set; }
+    /// <summary>1.2.0: files the renderer fork needs besides the patched DLL (0.27.0: the smoke shader, softbody_smoke.bundle).
+    /// They sit next to it in the payload and the release, and go in the fork's Renderite.Renderer_Data\StreamingAssets\Softbody.
+    /// None in packs made before. A manager before 1.2.0 skips the list (it does not know it): see Manager.PackLacks.</summary>
+    public List<ForkFile> ForkFiles { get; set; }
 
     public const string FileName = "manifest.json";
+    static readonly Regex ForkFileName = new(@"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+$"),
+                          DeviceName = new(@"^(?:CON|PRN|AUX|NUL|COM\d|LPT\d)$", RegexOptions.IgnoreCase), Sha = new("^[0-9a-fA-F]{64}$");
+    static readonly HashSet<string> Taken = new(StringComparer.OrdinalIgnoreCase)
+        { "Softbody.dll", "Renderite.Unity.dll", "SoftbodyManager.exe", FileName, SignedUpdate.FileName };
+
+    /// <summary>1.2.0: what is wrong with the list of renderer files (null: nothing; no list is fine). A name is a plain file
+    /// name with an extension (no folders), not one the pack's other files use.</summary>
+    public string ForkFilesProblem()
+    {
+        if (ForkFiles == null) return null;
+        if (ForkFiles.Count > 16) return "lists too many renderer files";
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in ForkFiles)
+        {
+            if (f?.Name == null || f.Name.Length > 64 || !ForkFileName.IsMatch(f.Name) || DeviceName.IsMatch(f.Name.Split('.')[0]) || Taken.Contains(f.Name) ||
+                f.Name.EndsWith(".part", StringComparison.OrdinalIgnoreCase))
+                return "lists a renderer file with an unusable name";
+            if (f.Sha256 == null || !Sha.IsMatch(f.Sha256)) return $"lacks the checksum of {f.Name}";
+            if (!seen.Add(f.Name)) return $"lists {f.Name} twice";
+        }
+        return null;
+    }
+
     public static PackManifest Load(string payloadDir)
     {
         var f = Path.Combine(payloadDir, FileName);
@@ -37,6 +64,14 @@ sealed class PackManifest
     public static PackManifest Parse(string json) => JsonSerializer.Deserialize<PackManifest>(json);
     public void Save(string payloadDir) =>
         File.WriteAllText(Path.Combine(payloadDir, FileName), JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+}
+
+/// <summary>1.2.0: a file the renderer fork needs besides the patched DLL: its name (the same in the payload, the release and
+/// the fork's StreamingAssets\Softbody folder) and its sha256.</summary>
+sealed class ForkFile
+{
+    public string Name { get; set; }
+    public string Sha256 { get; set; }
 }
 
 /// <summary>
@@ -65,7 +100,11 @@ sealed class Paths
     public string ParkedLibraries => Path.Combine(Parked, "Libraries");
     public string ParkedLog => Path.Combine(Parked, "README.txt");
     public string PackRendererDll => PayloadDir == null ? null : Path.Combine(PayloadDir, "Renderite.Unity.dll");
+    /// <summary>1.2.0: one of the pack's renderer files (in the payload).</summary>
+    public string PackFile(string name) => PayloadDir == null ? null : Path.Combine(PayloadDir, name);
     public const string RendererDll = @"Renderite.Renderer_Data\Managed\Renderite.Unity.dll";
+    /// <summary>1.2.0: where the renderer files go in the fork (the patched renderer loads the smoke shader's bundle from there).</summary>
+    public const string ForkFilesDir = @"Renderite.Renderer_Data\StreamingAssets\Softbody";
 
     public static Paths ForDev(string baseDir, string game, string steam) => new()
     {
@@ -352,21 +391,40 @@ static class Manager
 
     static string Ten(string commit) => commit == null ? "?" : commit[..Math.Min(10, commit.Length)];
 
-    /// <summary>Whether the fork still matches the installed renderer (a Resonite update needs a new fork), and why.</summary>
+    /// <summary>Whether the fork still matches the installed renderer (a Resonite update needs a new fork), and why. 1.2.0: a
+    /// pack's fork also needs the renderer files the pack lists (0.27.0: the smoke shader).</summary>
     public static (bool ok, string text) ForkStatus(Paths p)
     {
+        var (ok, text, _) = ForkCheck(p);
+        return (ok, text);
+    }
+
+    /// <summary>1.2.0: the renderer files the fork lacks (or has another version of), when that is all it lacks: it matches the
+    /// installed renderer and has the Softbody patch. Repair puts them in (UpdateForkFiles). Empty otherwise.</summary>
+    public static List<string> RepairNeeded(Paths p) => ForkCheck(p).lacks;
+
+    static (bool ok, string text, List<string> lacks) ForkCheck(Paths p)
+    {
+        var none = new List<string>();
         var official = OfficialCommit(p);
         var forkDll = Path.Combine(p.Fork, Paths.RendererDll);
-        if (official == null) return (false, "could not read the installed renderer's version");
+        if (official == null) return (false, "could not read the installed renderer's version", none);
         if (!File.Exists(forkDll))
-            return (false, p.IsPack ? "not set up yet (setup step 2)" : "no fork at " + p.Fork + " (build it with Rebuild fork)");
+            return (false, p.IsPack ? "not set up yet (setup step 2)" : "no fork at " + p.Fork + " (build it with Rebuild fork)", none);
         var fork = CommitOf(forkDll);
         bool patched = Contains(forkDll, "Softbody");
         if (fork != official)
             return (false, $"out of date: Resonite's renderer is {Ten(official)}, the fork {Ten(fork)}. " +
                            (p.IsPack ? "Your Resonite updated: take -RendererPath out of the launch options until Lenki puts out an update for it, then press Update (a mismatched renderer may not start)"
-                                     : "Rebuild it before starting Resonite with -RendererPath (a mismatched renderer may not start)"));
-        return (patched, patched ? $"matches Resonite's renderer ({Ten(official)}), Softbody patch in" : "matches, but the Softbody patch is missing: set it up again");
+                                     : "Rebuild it before starting Resonite with -RendererPath (a mismatched renderer may not start)"), none);
+        if (!patched) return (false, "matches, but the Softbody patch is missing: set it up again", none);
+        string fine = $"matches Resonite's renderer ({Ten(official)}), Softbody patch in";
+        if (!p.IsPack) return (true, fine, none);
+        if (p.Pack.ForkFilesProblem() is { } bad) return (false, $"the pack's manifest {bad}: get the pack again from Lenki", none);
+        var lacks = ForkLacks(p);
+        if (lacks.Count > 0) return (false, $"{fine}, but it lacks {Describe(lacks)}: press Repair", lacks);
+        var listed = ListedForkFiles(p).Select(f => f.Name).ToList();
+        return (true, listed.Count > 0 ? $"{fine}, with {Describe(listed)}" : fine, none);
     }
 
     /// <summary>A pack: whether its patched renderer was built for this Resonite (null: yes; else why not).</summary>
@@ -382,6 +440,7 @@ static class Manager
                    "wait for Lenki's update for your Resonite version, then press Update";
         if (p.Pack.RendererDllSha256 != null && !string.Equals(Sha256(p.PackRendererDll), p.Pack.RendererDllSha256, StringComparison.OrdinalIgnoreCase))
             return "the pack's Renderite.Unity.dll does not match its manifest (damaged download?)";
+        if (p.Pack.ForkFilesProblem() is { } bad) return $"the pack's manifest {bad} (damaged download?): get the pack again from Lenki";
         return null;
     }
 
@@ -389,7 +448,8 @@ static class Manager
     /// A pack: makes the renderer fork (Resonite must be closed). Copies the installed renderer (Resonite\Renderer, without
     /// BepInEx or Doorstop files) to a new folder, swaps in the pack's patched Renderite.Unity.dll and marks it as ours, then
     /// puts it at Resonite\RendererSoftbody, replacing an older fork of ours (never a folder we did not make). Only when the
-    /// patched DLL was built for exactly this renderer. Returns what was done.
+    /// patched DLL was built for exactly this renderer. 1.2.0: the pack's renderer files go in too (0.27.0: the smoke shader);
+    /// one the pack lacks is left out and said (Repair puts it in later). Returns what was done.
     /// </summary>
     public static string SetUpFork(Paths p, Action<string> progress)
     {
@@ -406,14 +466,150 @@ static class Manager
         File.Copy(p.PackRendererDll, Path.Combine(fresh, Paths.RendererDll), overwrite: true);
         if (!string.Equals(Sha256(Path.Combine(fresh, Paths.RendererDll)), Sha256(p.PackRendererDll), StringComparison.OrdinalIgnoreCase))
             throw new IOException("the patched renderer did not copy correctly");
+        var (put, lacking) = CopyForkFiles(p, fresh);
         File.WriteAllText(Path.Combine(fresh, ForkMarker),
             $"Made by the Softbody manager from {official} on {DateTime.Now:yyyy-MM-dd HH:mm}, with the Softbody-patched Renderite.Unity.dll " +
             $"(Renderite commit {OfficialCommit(p)}, MIT, see the pack's LICENSE-Renderite.txt). Safe to delete; the manager can make it again.\r\n");
         if (Directory.Exists(p.Fork)) Retry(() => Directory.Delete(p.Fork, true));  // an older fork of ours (it has the marker)
         Retry(() => Directory.Move(fresh, p.Fork));
-        AppendLog(p, $"{DateTime.Now:yyyy-MM-dd HH:mm} renderer fork made at {p.Fork} from a friend pack ({files} files, {bytes / 1048576.0:0} MB, Renderite {Ten(OfficialCommit(p))}).");
-        return $"The renderer fork is set up at {p.Fork} ({files} files, {bytes / 1048576.0:0} MB).";
+        AppendLog(p, $"{DateTime.Now:yyyy-MM-dd HH:mm} renderer fork made at {p.Fork} from a friend pack ({files} files, {bytes / 1048576.0:0} MB, Renderite {Ten(OfficialCommit(p))}" +
+                     (put.Count > 0 ? $"; with {string.Join(", ", put)}" : "") + (lacking.Count > 0 ? $"; without {string.Join(", ", lacking)}, which the pack lacks" : "") + ").");
+        return $"The renderer fork is set up at {p.Fork} ({files} files, {bytes / 1048576.0:0} MB)" + (put.Count > 0 ? $", with {Describe(put)}." : ".") +
+               (lacking.Count > 0 ? $" It lacks {Describe(lacking)}: the pack does not have {(lacking.Count == 1 ? "it" : "them")} yet (Repair gets {(lacking.Count == 1 ? "it" : "them")})." : "");
     }
+
+    // ------------------------------------------------------------------ 1.2.0: the fork's renderer files (0.27.0: the smoke shader)
+
+    /// <summary>Renderer files in words (0.27.0's one is the smoke shader).</summary>
+    public static string Describe(IReadOnlyList<string> names) =>
+        names.Count == 1 && names[0].Contains("smoke", StringComparison.OrdinalIgnoreCase) ? $"the smoke shader ({names[0]})"
+        : (names.Count == 1 ? "the renderer file " : "the renderer files ") + string.Join(", ", names);
+
+    /// <summary>The pack's renderer files (none when the list is damaged: ForkStatus and PackRendererMismatch say so).</summary>
+    static List<ForkFile> ListedForkFiles(Paths p) =>
+        p.Pack?.ForkFiles == null || p.Pack.ForkFilesProblem() != null ? new List<ForkFile>() : p.Pack.ForkFiles.ToList();
+
+    /// <summary>For the window (it asks every two seconds): whether a file is there with this checksum; one the running renderer
+    /// holds open is taken as there.</summary>
+    static bool Matches(string file, string sha)
+    {
+        try { return File.Exists(file) && Same(Sha256(file), sha); }
+        catch (IOException) { return true; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The renderer files the pack's manifest lists that its payload lacks (or has damaged). A manager before 1.2.0 that applied
+    /// an update with them did not know them, so it did not download them: the manager it swapped in gets them on its first start
+    /// (Updater.FetchPackFilesAsync).
+    /// </summary>
+    public static List<string> PackLacks(Paths p) => ListedForkFiles(p).Where(f => !Matches(p.PackFile(f.Name), f.Sha256)).Select(f => f.Name).ToList();
+
+    /// <summary>The renderer files the pack lists that the fork lacks (or has another version of).</summary>
+    static List<string> ForkLacks(Paths p) =>
+        ListedForkFiles(p).Where(f => !Matches(Path.Combine(p.Fork, Paths.ForkFilesDir, f.Name), f.Sha256)).Select(f => f.Name).ToList();
+
+    /// <summary>Copies the pack's renderer files into a fork being made (at <paramref name="forkRoot"/>): the ones it put in, and
+    /// the ones the pack lacks.</summary>
+    static (List<string> put, List<string> lacking) CopyForkFiles(Paths p, string forkRoot)
+    {
+        List<string> put = new(), lacking = new();
+        foreach (var f in ListedForkFiles(p))
+        {
+            var source = p.PackFile(f.Name);
+            if (!File.Exists(source) || !Same(Sha256(source), f.Sha256)) { lacking.Add(f.Name); continue; }
+            var target = Path.Combine(forkRoot, Paths.ForkFilesDir, f.Name);
+            Directory.CreateDirectory(Path.GetDirectoryName(target));
+            File.Copy(source, target, overwrite: true);
+            if (!Same(Sha256(target), f.Sha256)) throw new IOException($"{f.Name} did not copy correctly");
+            put.Add(f.Name);
+        }
+        return (put, lacking);
+    }
+
+    /// <summary>
+    /// Makes the fork's renderer files (Renderite.Renderer_Data\StreamingAssets\Softbody) the pack's (Resonite must be closed):
+    /// puts in each one the pack lists (the version it replaces is kept in the backups' Renderer folder), and moves the ones the
+    /// pack does not list there too: they came with another release (going back to a release without the smoke shader takes it
+    /// out). Only in the manager's own fork, when it matches the installed renderer. Returns what was done, or null when there was
+    /// nothing to do.
+    /// </summary>
+    public static string UpdateForkFiles(Paths p)
+    {
+        RequireClosed();
+        if (!p.IsPack) throw new InvalidOperationException("renderer files are for friend packs");
+        if (p.Pack.ForkFilesProblem() is { } bad) throw new InvalidOperationException($"the pack's manifest {bad} (damaged download?): get the pack again from Lenki");
+        if (!File.Exists(Path.Combine(p.Fork, ForkMarker))) throw new InvalidOperationException($"{p.Fork} was not made by this manager: left as it is");
+        var dll = Path.Combine(p.Fork, Paths.RendererDll);
+        if (!File.Exists(dll) || CommitOf(dll) != OfficialCommit(p)) throw new InvalidOperationException("the renderer fork is out of date: set it up again");
+        var dir = Path.Combine(p.Fork, Paths.ForkFilesDir);
+        var listed = ListedForkFiles(p);
+        List<string> put = new(), replaced = new(), lacking = new(), taken = new();
+        foreach (var f in listed)
+        {
+            string source = p.PackFile(f.Name), target = Path.Combine(dir, f.Name);
+            if (File.Exists(target) && Same(Sha256(target), f.Sha256)) continue;
+            if (!File.Exists(source) || !Same(Sha256(source), f.Sha256)) { lacking.Add(f.Name); continue; }
+            Directory.CreateDirectory(dir);
+            if (File.Exists(target)) replaced.Add(KeepForkFile(p, target, move: false));
+            Retry(() => File.Copy(source, target, overwrite: true));
+            if (!Same(Sha256(target), f.Sha256)) throw new IOException($"{f.Name} did not copy correctly");
+            put.Add(f.Name);
+        }
+        var kept = new List<string>();
+        if (Directory.Exists(dir))
+            foreach (var file in Directory.GetFiles(dir))
+            {
+                var name = Path.GetFileName(file);
+                if (listed.Any(f => f.Name.Equals(name, StringComparison.OrdinalIgnoreCase))) continue;
+                kept.Add(KeepForkFile(p, file, move: true));
+                taken.Add(name);
+            }
+        if (put.Count + taken.Count + lacking.Count == 0) return null;
+        var said = new List<string>();
+        var logged = new List<string>();
+        if (put.Count > 0)
+        {
+            said.Add($"The renderer fork has {Describe(put)} now" + (replaced.Count > 0 ? $"; the version it replaced is kept as {string.Join(", ", replaced)}." : "."));
+            logged.Add($"{string.Join(", ", put)} put in" + (replaced.Count > 0 ? $" (replaced: kept as {string.Join(", ", replaced)})" : ""));
+        }
+        if (taken.Count > 0)
+        {
+            said.Add($"{Cap(Describe(taken))} came with another release: taken out of the renderer fork, kept as {string.Join(", ", kept)}.");
+            logged.Add($"{string.Join(", ", taken)} taken out (not in this release; kept as {string.Join(", ", kept)})");
+        }
+        if (lacking.Count > 0)
+        {
+            said.Add($"The renderer fork still lacks {Describe(lacking)}: the pack does not have {(lacking.Count == 1 ? "it" : "them")} yet (Repair gets {(lacking.Count == 1 ? "it" : "them")}).");
+            logged.Add($"{string.Join(", ", lacking)} not put in (the pack lacks {(lacking.Count == 1 ? "it" : "them")})");
+        }
+        AppendLog(p, $"{DateTime.Now:yyyy-MM-dd HH:mm} renderer fork's files ({Paths.ForkFilesDir}): {string.Join("; ", logged)}.");
+        return string.Join(" ", said);
+    }
+
+    /// <summary>Keeps one of the fork's renderer files in the backups' Renderer folder as name.&lt;sha8&gt;.bak (once for each
+    /// content); <paramref name="move"/>: it leaves the fork. Returns where it is kept.</summary>
+    static string KeepForkFile(Paths p, string file, bool move)
+    {
+        var keep = Path.Combine(p.Parked, "Renderer");
+        Directory.CreateDirectory(keep);
+        string name = Path.GetFileName(file), sha = Sha256(file), bak;
+        bool have = false;
+        for (int k = 1; ; k++)
+        {
+            bak = Path.Combine(keep, k == 1 ? $"{name}.{sha[..8]}.bak" : $"{name}.{sha[..8]}.{k}.bak");
+            if (!File.Exists(bak)) break;
+            if (Same(Sha256(bak), sha)) { have = true; break; }   // this same content is kept already
+        }
+        var target = bak;
+        if (move) { if (have) Retry(() => File.Delete(file)); else Retry(() => File.Move(file, target)); }
+        else if (!have) File.Copy(file, target);
+        return Path.Combine(Path.GetFileName(p.Parked), "Renderer", Path.GetFileName(target));
+    }
+
+    static string Cap(string s) => string.IsNullOrEmpty(s) ? s : char.ToUpper(s[0]) + s[1..];
 
     /// <summary>
     /// 1.1.0 (updates): puts the pack's patched Renderite.Unity.dll into the existing fork (Resonite must be closed), when the

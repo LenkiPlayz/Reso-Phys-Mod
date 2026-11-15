@@ -13,11 +13,19 @@ namespace Softbody;
 /// </summary>
 static class SoftbodyRuntime
 {
-    public const string Version = "0.27.0";
+    public const string Version = "0.36.0";
     public const string TypeName = "[Softbody]Softbody.Softbody";
     public const string SkinnedTypeName = "[Softbody]Softbody.SkinnedSoftbody";
+    public const string ClothTypeName = "[Softbody]Softbody.Cloth";
+    public const string ClothWindTypeName = "[Softbody]Softbody.ClothWind";
+    /// <summary>0.31.0.</summary>
+    public const string ClothBlastTypeName = "[Softbody]Softbody.ClothBlast";
+    /// <summary>0.34.0.</summary>
+    public const string PopTypeName = "[Softbody]Softbody.Pop";
     /// <summary>Cap on the flesh (SkinnedSoftbody) surface points simulated on this client, all components together.</summary>
     public const int MaxFleshPoints = 12000;
+    /// <summary>0.29.0: cap on the cloth points simulated on this client, all Cloth components together.</summary>
+    public const int MaxClothPoints = 24000;
     /// <summary>0.15.0: the most liquid particles one world simulates on this client (all emitters together).</summary>
     public const int MaxFluidParticles = 20000;
     /// <summary>0.16.0: a world's particles at most when the renderer fork simulates the liquid on the GPU (0.25.0: 524288,
@@ -68,6 +76,8 @@ static class SoftbodyRuntime
     static volatile bool _shutdown;
     static readonly HashSet<Softbody> _components = new();
     static readonly HashSet<SkinnedSoftbody> _flesh = new();
+    static readonly HashSet<Cloth> _cloths = new();
+    static readonly HashSet<ClothWind> _winds = new();
     // claims: a mesh asset (Softbody, and SkinnedSoftbody without instancing) or a StaticMesh (instanced SkinnedSoftbody, 0.14.0)
     static readonly Dictionary<object, object> _claims = new(ReferenceEqualityComparer.Instance);
 
@@ -86,7 +96,7 @@ static class SoftbodyRuntime
             catch (Exception ex) { Warn("could not subscribe to engine shutdown: " + ex.Message); }
             StatsServer.Start(StatusJson);
             Task.Run(RestorePump);
-            Log($"Softbody {Version} plugin ready: components {TypeName} (lattice, MeshRenderer or SkinnedMeshRenderer) and {SkinnedTypeName} (tet shell + XPBD, SkinnedMeshRenderer), paint brush {BrushTypeName}. Default budget {BudgetMs} ms per softbody per frame (each component's Budget field), cap {MaxTotalPoints} cage points and {MaxFleshPoints} flesh points in total. " +
+            Log($"Softbody {Version} plugin ready: components {TypeName} (lattice, MeshRenderer or SkinnedMeshRenderer) and {SkinnedTypeName} (tet shell + XPBD, SkinnedMeshRenderer), cloth {ClothTypeName} with wind {ClothWindTypeName} and blast {ClothBlastTypeName} (MeshRenderer with a StaticMesh, or a SkinnedMeshRenderer), pop {PopTypeName} (any model's meshes into soft or stiff pieces), paint brush {BrushTypeName}. Default budget {BudgetMs} ms per softbody per frame (each component's Budget field; it pauses when a minute's average is over it, or 4 times it for 10 s), cap {MaxTotalPoints} cage points, {MaxFleshPoints} flesh points and {MaxClothPoints} cloth points in total. " +
                 $"Skinned meshes: {GpuSkinModeDescription()}.");
         }
         catch (Exception ex) { Warn("runtime init failed: " + ex); }
@@ -119,8 +129,20 @@ static class SoftbodyRuntime
     public static void Unregister(Softbody c) => _components.Remove(c);
     public static void Register(SkinnedSoftbody c) => _flesh.Add(c);
     public static void Unregister(SkinnedSoftbody c) => _flesh.Remove(c);
+    public static void Register(Cloth c) => _cloths.Add(c);
+    public static void Unregister(Cloth c) => _cloths.Remove(c);
+    public static void Register(ClothWind w) => _winds.Add(w);
+    public static void Unregister(ClothWind w) => _winds.Remove(w);
 
-    /// <summary>The Softbody and SkinnedSoftbody components of <paramref name="world"/> running on this client (paint targets for the brush).</summary>
+    /// <summary>0.29.0: the ClothWind components of <paramref name="world"/> that blow (world thread, Gate held).</summary>
+    public static void CollectWinds(World world, List<global::Softbody.Core.Cloth.ClothWindSource> into)
+    {
+        into.Clear();
+        foreach (var w in _winds)
+            if (ReferenceEquals(w.World, world) && w.TryRead(out var s)) into.Add(s);
+    }
+
+    /// <summary>The Softbody, SkinnedSoftbody and Cloth components of <paramref name="world"/> running on this client (paint targets for the brush).</summary>
     public static void CollectPaintTargets(World world, List<IPaintable> into)
     {
         into.Clear();
@@ -128,6 +150,25 @@ static class SoftbodyRuntime
             if (c.PaintTarget != null && ReferenceEquals(c.World, world) && !c.IsRemoved) into.Add(c);
         foreach (var c in _flesh)
             if (((IPaintable)c).BrushTarget != null && ReferenceEquals(c.World, world) && !c.IsRemoved) into.Add(c);
+        foreach (var c in _cloths)
+            if (((IPaintable)c).BrushTarget != null && ReferenceEquals(c.World, world) && !c.IsRemoved) into.Add(c);
+    }
+
+    /// <summary>0.31.0: the Cloth components of <paramref name="world"/> registered on this client (running or not), for a
+    /// blast to find (world thread, Gate held).</summary>
+    public static void CollectCloths(World world, List<Cloth> into)
+    {
+        into.Clear();
+        foreach (var c in _cloths)
+            if (ReferenceEquals(c.World, world) && !c.IsRemoved) into.Add(c);
+    }
+
+    /// <summary>0.29.0: cloth points simulated by every Cloth on this client but <paramref name="except"/>.</summary>
+    public static int TotalClothPoints(Cloth except)
+    {
+        int n = 0;
+        foreach (var c in _cloths) if (c != except) n += c.RunningPointCount;
+        return n;
     }
 
     /// <summary>Flesh surface points simulated by every SkinnedSoftbody on this client but <paramref name="except"/>.</summary>
@@ -169,6 +210,7 @@ static class SoftbodyRuntime
             {
                 Softbody c => !c.IsDestroyed && c.World != null && !c.World.IsDestroyed && c.RunningPointCount > 0,
                 SkinnedSoftbody f => !f.IsDestroyed && f.World != null && !f.World.IsDestroyed && f.IsRunning,
+                Cloth k => !k.IsDestroyed && k.World != null && !k.World.IsDestroyed && k.IsRunning,
                 _ => false,
             };
         }
@@ -230,6 +272,30 @@ static class SoftbodyRuntime
         return seen;
     }
 
+    static long _v2CheckedAt;
+    static bool _v2Seen;
+
+    /// <summary>0.30.0: the renderer (the 0.30.0 fork) also takes a skinned mesh's triangles, UVs and colours in place
+    /// (<see cref="PartialEncode.HandshakeNameV2"/>): an avatar cloth can show tears. Checked at most every 2 s.</summary>
+    internal static bool RendererTakesTrianglesInPlace()
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_v2CheckedAt != 0 && now - _v2CheckedAt < 2 * System.Diagnostics.Stopwatch.Frequency) return _v2Seen;
+        _v2CheckedAt = now;
+        bool seen = false;
+        try
+        {
+            if (OperatingSystem.IsWindows() && System.Threading.EventWaitHandle.TryOpenExisting(PartialEncode.HandshakeNameV2, out var h))
+            {
+                h.Dispose();
+                seen = true;
+            }
+        }
+        catch { }
+        _v2Seen = seen;
+        return seen;
+    }
+
     /// <summary>
     /// Whether a new skinned Softbody should use the GPU path: the renderer keeps skinning the mesh and the plugin only
     /// uploads bind-space positions and normals. Needs the SoftbodyRenderer patch (or SOFTBODY_GPU_SKIN=probe), the engine
@@ -287,6 +353,10 @@ static class SoftbodyRuntime
             sb.Append(",\"skinnedComponentType\":").Append(StatsServer.Json(SkinnedTypeName));
             sb.Append(",\"maxFleshPoints\":").Append(MaxFleshPoints);
             sb.Append(",\"totalFleshPoints\":").Append(TotalFleshPoints(null));
+            sb.Append(",\"clothComponentType\":").Append(StatsServer.Json(ClothTypeName));
+            sb.Append(",\"maxClothPoints\":").Append(MaxClothPoints);
+            sb.Append(",\"totalClothPoints\":").Append(TotalClothPoints(null));
+            sb.Append(",\"clothWinds\":").Append(_winds.Count);
             sb.Append(",\"budgetMs\":").Append(BudgetMs.ToString(ic));
             sb.Append(",\"maxTotalPoints\":").Append(MaxTotalPoints);
             sb.Append(",\"totalPoints\":").Append(TotalPoints(null));
@@ -304,6 +374,14 @@ static class SoftbodyRuntime
             sb.Append("],\"skinnedSoftbodies\":[");
             first = true;
             foreach (var c in _flesh)
+            {
+                if (!first) sb.Append(',');
+                first = false;
+                sb.Append(c.SnapshotJson ?? "{}");
+            }
+            sb.Append("],\"cloths\":[");
+            first = true;
+            foreach (var c in _cloths)
             {
                 if (!first) sb.Append(',');
                 first = false;

@@ -85,7 +85,8 @@ public class SkinnedSoftbody : Component, IPaintable
     /// <summary>Torso, arms, legs and feet.</summary>
     public readonly Sync<bool> OthersBody;
     public readonly Sync<bool> OthersHands;
-    /// <summary>Auto shut-off: if this component's average world-thread cost per frame goes above this many ms, it pauses (0.5..50).</summary>
+    /// <summary>Auto shut-off: if this component's world-thread cost per frame, averaged over a minute, goes above this many ms
+    /// (or over 4 times it for 10 s), it pauses (0.5..50). 0.29.1: a lag spike no longer does.</summary>
     public readonly Sync<float> Budget;
     /// <summary>Metres: past this distance from you, this client stops simulating and colliding it and shows it at rest
     /// (0 = never).</summary>
@@ -488,11 +489,12 @@ public class SkinnedSoftbody : Component, IPaintable
                 break;
             default:
                 if (_debugSlot != null && !_debugSlot.ActiveSelf) _debugSlot.ActiveSelf = true;
-                if (_inst.TotalFrames > _inst.Warmup && _inst.EmaMainMs > BudgetMs)
-                    Block($"paused: over budget ({_inst.EmaMainMs:0.00} ms per frame on the world thread > {BudgetMs:0.##} ms). Raise Budget, lower SimPoints or Substeps, or change any setting to retry");
-                else if (_inst.TotalFrames > _inst.Warmup && _inst.LastFrameMs > 150)
-                    Block($"paused: a single frame took {_inst.LastFrameMs:0} ms. Change any setting (or toggle Enabled) to retry");
-                else _state = _inst.RunningState;
+                // 0.29.1: only a sustained overrun pauses it (BudgetWatch: a minute's average over Budget, or 10 s over 4x);
+                // one long frame or a lag spike no longer does
+                string over = _inst.Watch.Verdict(BudgetMs);
+                if (over != null)
+                    Block($"paused: {over}. Raise Budget, lower SimPoints or Substeps, or change any setting to retry");
+                else _state = _inst.RunningState + _inst.Watch.Note(BudgetMs);
                 break;
         }
 
@@ -818,10 +820,16 @@ sealed class DabMirror
     readonly struct Raw
     {
         public readonly float3 Position; public readonly float Radius; public readonly colorX Color; public readonly float Strength, Hardness; public readonly bool Blur;
-        public Raw(Softbody.PaintDab d) { Position = d.Position.Value; Radius = d.Radius.Value; Color = d.Color.Value; Strength = d.Strength.Value; Hardness = d.Hardness.Value; Blur = d.Blur.Value; }
+        public readonly bool Mirrored; public readonly float3 MirrorPosition; public readonly int OnlyMaterial; // 0.28.0
+        public Raw(Softbody.PaintDab d)
+        {
+            Position = d.Position.Value; Radius = d.Radius.Value; Color = d.Color.Value; Strength = d.Strength.Value; Hardness = d.Hardness.Value; Blur = d.Blur.Value;
+            Mirrored = d.Mirrored.Value; MirrorPosition = d.MirrorPosition.Value; OnlyMaterial = d.OnlyMaterial.Value;
+        }
         public bool Same(in Raw o) =>
             Blur == o.Blur && Position.Equals(o.Position) && Radius.Equals(o.Radius) && Strength.Equals(o.Strength) && Hardness.Equals(o.Hardness) &&
-            Color.profile == o.Color.profile && Color.baseColor.Equals(o.Color.baseColor);
+            Color.profile == o.Color.profile && Color.baseColor.Equals(o.Color.baseColor) &&
+            Mirrored == o.Mirrored && MirrorPosition.Equals(o.MirrorPosition) && OnlyMaterial == o.OnlyMaterial;
     }
 
     public ReadOnlySpan<Dab> Read(SyncList<Softbody.PaintDab> list, ColorProfile profile)
@@ -842,7 +850,9 @@ sealed class DabMirror
             if (_ids[i] == id && raw.Same(_raw[i])) continue;
             _ids[i] = id; _raw[i] = raw;
             var c = raw.Color.ToProfile(profile);
-            _buf[i] = new Dab(new Vector3(raw.Position.x, raw.Position.y, raw.Position.z), raw.Radius, new Vector4(c.r, c.g, c.b, c.a), raw.Strength, raw.Hardness, raw.Blur).Sanitized();
+            // 0.28.0: the mirror centre, and OnlyMaterial n (1 = the first material, 0 = any) as material index n - 1 (-1 = any)
+            _buf[i] = new Dab(new Vector3(raw.Position.x, raw.Position.y, raw.Position.z), raw.Radius, new Vector4(c.r, c.g, c.b, c.a), raw.Strength, raw.Hardness, raw.Blur,
+                              raw.Mirrored, new Vector3(raw.MirrorPosition.x, raw.MirrorPosition.y, raw.MirrorPosition.z), raw.OnlyMaterial > 0 ? raw.OnlyMaterial - 1 : -1).Sanitized();
         }
         return _buf.AsSpan(0, n);
     }

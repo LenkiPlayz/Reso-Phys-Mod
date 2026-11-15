@@ -621,6 +621,29 @@ sealed class FluidColliders
     // ones, so a floor always has the last say: a grabbed box pressed into a puddle pushed water through the floor)
     Dictionary<Collider, Vector3> _lastAt = new(), _nowAt = new(), _boneLast = new(), _boneNow = new();
     public int WorldShapes, UserShapes, UserSpheres;
+    /// <summary>0.29.0: colliders on or under these slots are skipped (a Cloth's own renderer slot, whose imported model
+    /// often carries a MeshCollider of the cloth itself, and its anchors). The world's root slot is never one. Null for none.</summary>
+    public Slot[] Exclude;
+    readonly Dictionary<Collider, bool> _excluded = new();
+    Slot[] _excludedFor;
+    /// <summary>0.29.2 (the cloth): players whose body shapes stand in for their bone colliders and dynamic-bone spheres,
+    /// which are then left out. Null or empty for none (the liquid).</summary>
+    public HashSet<User> BodyUsers;
+    readonly Dictionary<Collider, User> _userOf = new();
+    readonly HashSet<User> _skipSpheres = new();
+
+    bool Excluded(Collider col)
+    {
+        var ex = Exclude;
+        if (ex == null || ex.Length == 0) return false;
+        if (!ReferenceEquals(ex, _excludedFor)) { _excluded.Clear(); _excludedFor = ex; }
+        if (_excluded.TryGetValue(col, out var e)) return e;
+        for (var s = col.Slot; s != null && !e; s = s.Parent)
+            foreach (var x in ex)
+                if (x != null && ReferenceEquals(s, x) && !x.IsRootSlot) { e = true; break; }
+        _excluded[col] = e;
+        return e;
+    }
 
     public void Gather(World world, Vector3 lo, Vector3 hi, float dt, uint mask, List<FleshCollider> into)
     {
@@ -633,7 +656,7 @@ sealed class FluidColliders
         if (_timer <= 0f)
         {
             _timer = 0.1f;
-            _overlap.Clear(); _solids.Clear(); _bones.Clear(); _rigSets.Clear(); _withRig.Clear();
+            _overlap.Clear(); _solids.Clear(); _bones.Clear(); _rigSets.Clear(); _withRig.Clear(); _excluded.Clear(); _userOf.Clear();
             var o = new float3(center.X, center.Y, center.Z); var rot = floatQ.Identity; var fs = new float3(size.X, size.Y, size.Z);
             world.Physics.BoxOverlap(in o, in rot, in fs, _overlap, IsCandidate, false);
             foreach (var c in _overlap)
@@ -647,7 +670,7 @@ sealed class FluidColliders
         if ((mask & FluidSim.CategoryWorld) != 0)
             foreach (var col in _solids)
             {
-                if (!Usable(col)) continue;
+                if (!Usable(col) || Excluded(col)) continue;
                 int first = into.Count;
                 if (!FleshInstance.AddShape(col, SkinMatrices.ToNumerics(col.Slot.LocalToGlobal), 0, null, into)) continue;
                 WorldShapes++;
@@ -663,9 +686,11 @@ sealed class FluidColliders
         _nowAt.Clear();
         const uint users = FluidSim.CategoryHead | FluidSim.CategoryBody | FluidSim.CategoryHands;
         if ((mask & users) == 0) return;
+        var shaped = BodyUsers is { Count: > 0 } ? BodyUsers : null;
         foreach (var col in _bones)
         {
-            if (!Usable(col)) continue;
+            if (!Usable(col) || Excluded(col)) continue;
+            if (shaped != null && _userOf.TryGetValue(col, out var owner) && owner != null && shaped.Contains(owner)) continue;
             byte cat = Category(_partOf.GetValueOrDefault(col, PlayerPart.Body));
             if ((mask & cat) == 0) continue;
             int first = into.Count;
@@ -683,7 +708,9 @@ sealed class FluidColliders
         (_boneLast, _boneNow) = (_boneNow, _boneLast);
         _boneNow.Clear();
         var half = 0.5f * size;
-        UserSpheres = UserColliderReader.CollectParts(world, _withRig, center - half, center + half, into, part => (mask & Category(part)) != 0 ? Category(part) : (byte)0);
+        var skip = _withRig;
+        if (shaped != null) { _skipSpheres.Clear(); _skipSpheres.UnionWith(_withRig); _skipSpheres.UnionWith(shaped); skip = _skipSpheres; }
+        UserSpheres = UserColliderReader.CollectParts(world, skip, center - half, center + half, into, part => (mask & Category(part)) != 0 ? Category(part) : (byte)0);
     }
 
     static byte Category(PlayerPart part) => part switch
@@ -718,6 +745,7 @@ sealed class FluidColliders
         }
         if (!set.Contains(col)) return false;
         if (!_partOf.ContainsKey(col)) _partOf[col] = PartOf(col, av);
+        if (!_userOf.ContainsKey(col)) { User u = null; try { u = av.Slot.ActiveUser; } catch { } _userOf[col] = u; }
         if (_partOf.Count > 2048) _partOf.Clear();
         return true;
     }

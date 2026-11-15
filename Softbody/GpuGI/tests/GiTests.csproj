@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Offline tests of the live bounce light (GI): the renderer fork's engine-free side (GiTypes, GiCompute, SoftbodyGI.hlsl) on
+       this machine's own GPU through SharpDX (the same 4.2.0 the renderer ships). Voxel scenes are written straight into the
+       slab buffer the voxelize shader fills in the game. No Unity, no Resonite. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Softbody.GI.Tests</AssemblyName>
+    <RootNamespace>Softbody.GI.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\*.cs" Link="GI\Shared\%(Filename)%(Extension)" />
+    <Compile Include="..\D3D\*.cs" Link="GI\D3D\%(Filename)%(Extension)" />
+    <!-- the fluid's run-time HLSL compiler (read only here; the fork compiles it once for both) -->
+    <Compile Include="..\..\GpuFluid\D3D\HlslCompiler.cs" Link="FluidGpu\HlslCompiler.cs" />
+    <None Include="..\Hlsl\SoftbodyGI.hlsl" Link="SoftbodyGI.hlsl" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpDX" Version="4.2.0" />
+    <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
+    <PackageReference Include="SharpDX.DXGI" Version="4.2.0" />
+  </ItemGroup>
+
+</Project>

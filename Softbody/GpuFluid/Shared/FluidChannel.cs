@@ -52,8 +52,11 @@ namespace Softbody.FluidGpu
         // collider categories (a liquid's CollideMask picks which it hits)
         public const uint CategoryWorld = 1, CategoryHead = 2, CategoryBody = 4, CategoryHands = 8;
 
-        /// <summary>0.27.0: a thick liquid's Viscosity is held to this (past it the implicit solve's iterations climb steeply).</summary>
-        public const float ThickViscosityCap = 15f;
+        /// <summary>0.27.0: a thick liquid's Viscosity is held to this (past it the implicit solve's iterations climb steeply): 15
+        /// until the thick grip (fork, 2026-11-14), since then 20, the top of Viscosity's range (at Lenki's pick, for a friend's
+        /// "super thick honey"): with the grip a Viscosity 20 solve takes about 60 to 110 iterations at 2.5 cm particles (more in a
+        /// big, deep pool), against 32 at 15.</summary>
+        public const float ThickViscosityCap = 20f;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]

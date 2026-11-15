@@ -20,11 +20,17 @@
     <Compile Include="..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
     <Compile Include="..\Core\Flesh\*.cs" Link="Core\Flesh\%(Filename)%(Extension)" />
     <Compile Include="..\Core\Fluid\*.cs" Link="Core\Fluid\%(Filename)%(Extension)" />
+    <!-- 0.29.0: world cloth -->
+    <Compile Include="..\Core\Cloth\*.cs" Link="Core\Cloth\%(Filename)%(Extension)" />
+    <!-- 0.34.0: Pop (a mesh bursts into pieces) -->
+    <Compile Include="..\Core\Pop\*.cs" Link="Core\Pop\%(Filename)%(Extension)" />
     <!-- The plugin's engine-matrix conversion (Elements.Core only), checked against the engine's own CPU skinning. -->
     <Compile Include="..\Plugin\SkinMatrices.cs" Link="Plugin\SkinMatrices.cs" />
     <!-- 0.9.0 GPU path: the engine-side partial encoder (Elements.Assets + Renderite.Shared only) and the renderer patch's
          Unity-free spec (flags, IL skeleton), both run here against the game's own DLLs. -->
     <Compile Include="..\Plugin\PartialEncode.cs" Link="Plugin\PartialEncode.cs" />
+    <!-- 0.30.0 avatar cloth: the renderer's copy of the mesh (Elements.Assets + Core only), run on the engine's own MeshX. -->
+    <Compile Include="..\Plugin\ClothSkinCopy.cs" Link="Plugin\ClothSkinCopy.cs" />
     <Compile Include="..\Renderer\UploadPatchSpec.cs" Link="Renderer\UploadPatchSpec.cs" />
     <!-- 0.16.0 GPU fluid: the renderer fork's engine-free side (channel, compiler, D3D11 driver, director), run here on
          this machine's own GPU through SharpDX (the same 4.2.0 the renderer ships, from the local package cache). -->

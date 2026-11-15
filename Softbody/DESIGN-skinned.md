@@ -314,6 +314,27 @@ Lenki asked to drop the ground check and collide only with what is solid.
   friction and the let-go, because NoBounce lowers the speeds the reach is estimated from.
 - **Diagnostics:** `XpbdSolver.Unbounced` and `FleshRig.Carried`, per step.
 
+## 0.28.0 (2026-11-12): brush mirror and material targeting
+
+Not skinned-only, but it changed PaintLayer's queries, which the skinned brush uses. User side: README, "0.28.0".
+- **A mirrored dab is one dab with two centres** (`Dab.Mirrored`, `MirrorPosition`). Each vertex uses its distance to
+  the nearer centre (`Dab.Distance2`), so it is blended once: no double strength on the centre line, one entry in
+  MaxDabs. The grid pass visits the sphere at P, then the sphere at P' skipping vertices already within r of P; it is
+  bit-identical to brute force.
+- **Materials are submesh indices**, in the renderer's Materials order: `_triMat` per triangle, `_vmat` bits per vertex
+  (bit 63 stands for 63 and up). A dab with a material changes only that material's vertices; its blur averages only
+  neighbours of that material. Raycasts and closest-point queries take a material and skip other triangles.
+  Synced as `PaintDab.OnlyMaterial` (0 = any, n = the n-th), so old dabs load as any with no OnAwake.
+- **Two BVHs** (nested `TriangleBvh`): QueryBvh on the posed positions (refitted when the pose changes) and RestBvh on
+  the rest positions (built lazily, only once a pose is set). Mirroring works on the rest mesh (`ClosestRestPoint`), and
+  `QueryPoint(hit)` maps a rest hit onto the posed mesh for the mirror bubble.
+- **The mirror plane** (`PaintLayer.Mirror(axis)`, cached per axis): tolerance max(0.5% of the bounds diagonal, half the
+  mean vertex spacing); score = the share of 1024 sampled vertices whose mirror image lies on the surface. The plane
+  through the bounds centre replaces the origin plane only when it scores 0.05 higher. The brush mirrors at a score of
+  0.6 and up, and snaps the image to the nearest surface of the same material within max(half the radius, 2 × tolerance).
+- **Hash gotcha:** an enum nested in a worker class is registered as a data-model type and changes the compatibility
+  hash, even if it is private and never synced. `BrushMirror` is top-level for that reason (19 types).
+
 ## Cost guess (before any code)
 
 - Fast Projective Skinning's notes suggest 3–5k simulated vertices for a whole body (on the GPU). We only simulate the painted region.

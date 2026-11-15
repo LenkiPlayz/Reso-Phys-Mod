@@ -3,6 +3,380 @@
 A selective softbody **component** for Resonite. One mesh, where the painted regions squish and wobble and
 the rest stays firm. It uses no bones and no blendshapes: the plugin moves the mesh vertices directly.
 
+0.36.0 (Pop's Strength range; installed 2026-11-15 03:11, not yet run in game; on GitHub as the stable v0.36.0 since 03:18): **each piece flies out at its own speed.**
+After 0.35.0's test Lenki said "Works good, just one last thing. could the strength be a random range per particle?"
+- **MaxStrength** (new, after Strength; 0 = off): each piece picks its own speed between Strength and MaxStrength, spread
+  evenly (Strength 2 and MaxStrength 8: from 2 to 8 m/s). Either order works; with both below 0 the pieces fly in. At 0
+  (or at Strength's own value) the push is exactly 0.35.0's.
+- It is per piece: a soft piece's particles all get its push, so it flies off whole. Every client picks the same speeds
+  (from the shot's seed).
+- With a range Randomness no longer slows the pieces (the range sets their speeds); it still sends them a little sideways
+  and spins them, the faster ones faster.
+- Popped over a floor at 1 to 10 m/s, nine in ten pieces land 0.2 to 3.5 m from the middle, against 0.2 to 2.3 m at
+  5.5 m/s alone (offline, the capsule player, stiff and soft alike).
+- **The compatibility hash changes** to `ZDD4CvWVbK3FMGZ8lQdbCA==`: everyone in a session needs 0.36.0. Plugin only; the
+  renderer fork is unchanged.
+- Fabrics move to 0.37.0.
+- Offline (Resonite closed, no game open): `pop` (150), `cloth` (187), `body` (30) and `plugin-check` (179) pass. Details:
+  DESIGN-pop.md.
+- Installed 2026-11-15 03:11 at Lenki's OK, with Resonite closed: Libraries\Softbody.dll e591971f... (819,712 bytes). The
+  0.35.0 it replaced (as its first start wove it) is parked as parked_addons\Libraries\Softbody.dll.0.35.0.bak. The
+  renderer fork is unchanged.
+- Released 2026-11-15 03:18 at Lenki's request as the stable v0.36.0 (https://github.com/LenkiPlayz/Reso-Phys-Mod/releases/tag/v0.36.0), so
+  friends' managers offer it. Their renderer gets this PC's fork (the thick grip, the cloth's v2 path and the bounce-light
+  test) with the bounce light switched off, Lenki's choice: their gi.ini says enabled = 0, this PC's stays on. GI is the
+  renderer's alone, so it does not stop anyone joining.
+
+0.35.0 (soft Pop; installed 2026-11-15 00:45, ran in game 02:45): **Pop's pieces are little cloths now, and they stick where they hit.**
+After the first pops in game Lenki said "thats for sure closer to what i want, but i was hoping it still had some cloth
+physics to its look", then picked soft pieces: "absolutely, maybe adhesion so they stick to surfaces too?"
+- **Soft pieces**: each piece is a little cloth of 3 to 48 particles, 1 to 4 cm apart. It flutters, folds and glides in
+  the air, and drapes over what it lands on. It keeps the model's look: every vertex follows its particles.
+- **Stiffness** (new, 0.3): from silk (0) to stiff (toward 1). A 30 cm piece with 10 cm of it over a table's edge hangs
+  11 cm at 0, 9 cm at 0.3, 2 cm at 0.6, and stays flat at 1. At 1 the pieces are 0.34.0's stiff flakes.
+- **Adhesion** (new, 2): the pieces hold on to what they hit, in their own weights. At 1 one just holds on a wall; above
+  1 they stay under a ceiling. They let go once more than 1 cm away (a fast bounce does at once). At 0 nothing sticks.
+- **Drag** (0.5) is, for soft pieces, how thick the air is (1: real air).
+- No piece goes through a floor: none shows in it landing edge first at 6 m/s, thrown at 60 m/s onto a thin floor, or
+  held at Adhesion 10 on a two-sided mesh floor.
+- **Cost** (offline, SteamVR open, no game): 848 soft confetti pieces (7,718 particles) take 2.2 ms a frame on average
+  while they move (worst 7.3), against 1.2 ms stiff. They are built with the cut, off the main thread, and cost next to
+  nothing once still.
+- **The compatibility hash changes** to `NFGzc83XbWSzcSAsQyVTfQ==`: everyone in a session needs 0.35.0. Plugin only; the
+  renderer fork is unchanged.
+- Fabrics move to 0.36.0.
+- Offline: `pop` (123), `cloth` (187), `body` (30) and `plugin-check` (178) pass. The look needs the game. Details:
+  DESIGN-pop.md.
+- Installed 2026-11-15 00:45 at Lenki's OK, with Resonite closed: Libraries\Softbody.dll 1672b61b... (819,712 bytes). The
+  0.34.0 it replaced (as its first start wove it) is parked as parked_addons\Libraries\Softbody.dll.0.34.0.bak. The
+  renderer fork is unchanged.
+- In game from 02:45, an avatar's body (39,766 vertices) popped 49 times: 19 to 4,511 soft pieces a pop, no warnings, fps
+  median 136 (lowest 30 with two or three big pops at once). Pops of 19 to 27 big pieces took up to 1 s to cut (the
+  others 0.1 to 0.3 s). Lenki: "Works good".
+
+0.34.0 (Pop; installed 2026-11-14 21:39, ran in game 22:03): **a new component that bursts a model into pieces, a death effect.**
+Lenki's goal behind the blasts: in a team shooter, the player model bursts into pieces when it dies. Lenki wanted it
+called something generic like "pop", keeping the blast's Shred "so you can choose how big each piece is".
+- **`Pop`** (new, under Physics): press **Fire** (or call it from ProtoFlux: it is an Action) and every mesh the Target
+  shows bursts into pieces. They fly out, fall, and lie about until **Lifetime** is up (8 s), shrinking away in the last
+  second. Target is filled in with the slot the Pop is attached on.
+- **Shred** picks the size, as on the Cloth Blast: a few big chunks at 0, confetti at 1 (0.7 by default). **MaxPieces**
+  (1500, up to 5000) caps the count: confetti on a big model gets no smaller than its surface split that many ways.
+- **The pieces look like the model**: the same materials and textures, its vertex colours, and the pose it had right
+  then, bones and blendshapes too. Big triangles are cut up, so there can be more pieces than triangles. The model's own
+  mesh never changes. Each piece has a back face, so a flake shows from both sides.
+- **Strength** (4 m/s out from the middle), **Randomness** (0.5: uneven, a little sideways, spinning) and **Drag** (0.5).
+  The pieces also carry the speed the model had.
+- The pieces hit the world (not the model's own colliders), never players. They tumble as stiff pieces with friction and
+  no bounce, land, and go still; still pieces cost next to nothing. A fast piece does not step through a thin floor.
+- **HideTarget** (on): the model is hidden while its pieces fly, until Lifetime is up. **ShowTarget** (a button, and an
+  Action) brings it back early on every client: call it at the respawn.
+- **In a session**: Fire writes only a small synced record: a seed, the time, and where the model was. Each client cuts
+  the model as it shows there with that seed and flies its own pieces, so a shot costs the session next to nothing. The
+  hide is each client's own: local drives on the renderers' Enabled, each put back as it was before it lets go, so nothing
+  of it is synced or saved. A client that joins more than 2 s after a shot does not replay it. A model sent away in the
+  same moment (a respawn teleport) still pops where it was.
+- **Limits**: up to 64 meshes and 600,000 vertices a pop (more is left whole). A renderer whose Enabled something else
+  drives is hidden through its slot, when that slot holds nothing else; otherwise it stays shown, and the Status says so.
+  In a world in the background the pieces wait (their time still runs out).
+- **Cost** (offline, Deadlock open): a capsule player of 6,816 triangles cut into 848 confetti pieces in 10 ms, off the
+  main thread. They then take about 1.8 ms a frame while they move (worst 5.7), and next to nothing once still.
+- New components: Pop, plus PopDebris and PopDebrisMesh, which the plugin makes on local slots. **The compatibility hash
+  changes** to `LA9nNgL8dW4qhffBF6g70Q==`: everyone in a session needs 0.34.0. Plugin only; the renderer fork is unchanged.
+- Fabrics move to 0.35.0.
+- Also in this build, from the thick-grip work: the liquid's Status takes ThickLiquid's Viscosity up to 20 (the renderer's
+  thick grip), so it no longer says "holds Viscosity to 15".
+- Offline: `pop` (39), `cloth` (187), `body` (30) and `plugin-check` (177) pass. The hide, the materials and the
+  skinned pose need the game to test. Details: DESIGN-pop.md.
+- Installed 2026-11-14 21:39 at Lenki's OK, with Resonite closed: Libraries\Softbody.dll f8f19f2b... (785,920 bytes). The
+  never-run 0.33.1 is parked as parked_addons\Libraries\Softbody.dll.0.33.1.bak. The renderer fork is unchanged.
+- In game 2026-11-14 22:03: five pops of an avatar's body (one mesh, 39,766 vertices) made 896 to 961 pieces each, cut
+  in 85 to 163 ms off the main thread, at 117 to 146 fps (144 without), with no warnings. Lenki: "closer to what i
+  want", but the pieces should have some cloth physics to their look (now they tumble as stiff flakes).
+
+Thick grip (renderer fork, installed 2026-11-14 20:20, not yet run in game): **ThickLiquid now holds on to what it touches, and goes up to
+Viscosity 20.** Lenki's friend could not get "super thick honey" out of it.
+- **Why it looked thin:** a thick liquid slid along floors and walls like a block on ice; its viscosity only worked inside
+  it. At Viscosity 15 a 20 cm cube slid 1.1 m down a 30 degree ramp in 4 s. Raising the cap alone made it slide further.
+- **Now it grips** the shapes it touches, inside its viscosity solve. On that ramp 15 creeps 14 cm in 4 s, and in a dam break
+  it stays about twice as tall. It rides along on a moving shape (a carried plate, a hand) instead of the shape sliding away
+  under it. It still flows: it creeps on.
+- **Viscosity goes up to 20** (10 m²/s at 2.5 cm particles; it was held to 15). 20 spreads about 15 % less than 15.
+- **Cost:** the grip costs nothing. 20 does: on an RTX 4070 a 43,000-particle pool takes 31 ms of GPU a frame at 20, 12 ms at
+  15 and 4 ms as water. A few thousand particles cost a few ms. With the grip, Viscosity 10 is about as thick as 15 was, at a
+  third of 15's cost.
+- **Bigger particles:** a thick liquid's viscosity now grows as the particle size to the power 1.5 (it was in proportion to
+  the size). With gripping walls that scaling fits best at every size. At 2.5 cm nothing changes.
+- Water is unchanged.
+- Renderer fork, plus one constant the plugin shares for its Status text, which comes with the plugin's next build. Until then
+  the plugin's Status may still say "ThickLiquid holds Viscosity to 15". No synced field changed: the hash is unchanged.
+- Offline: `thick` (38 checks), `gpu-fluid`, `fluid`, `fluid-size`, `fluid-tension`, `fluid-sleep` and `foam` pass. Details:
+  DESIGN-fluid.md, "Thick grip and Viscosity 20".
+- Installed 2026-11-14 20:20 at Lenki's OK, with Resonite closed: Renderite.Unity.dll 42c4eb7c..., the GI build, with GI
+  test 3 unchanged. The old fork is parked as parked_addons\RendererSoftbody.before-thick-grip.
+- This fork build also brings the cloth's v2 in-place path for skinned meshes, so avatar cloth (0.30.0 and later) can tear in
+  the game for the first time.
+
+0.33.1 (fast pieces): **a strong blast at low Drag no longer drops the game to about 10 fps, and fast pieces no longer go
+through thin floors.** Lenki: "sometimes at low drag and high strength the cloth sim starts to act up and drop the frame
+rate to about 10 fps".
+- **The slowdown**: every point looked for shapes as far as the fastest point could get in a frame, and a slow frame is
+  long (up to 0.1 s). After a strong blast at low Drag, every point paired with every shape near the cloth, like every
+  body sphere of the players around it: millions of pairs, checked in every step. The slower the game got, the worse.
+- **Now** each point looks only along its own way, as far as it gets in the time the frame's steps simulate (at most
+  33 ms), and only the shapes near some point are gathered. A fast piece looks at most 15 cm ahead for players.
+- **Through the floor**: a triangle was checked only where a step ended, within the cloth's thickness (1 cm), so a piece
+  faster than about 14 m/s could step right over a thin floor or wall (a mesh collider). That was already so in 0.33.0.
+  Now each step's whole way is checked.
+- When pieces would get further than 1 m in a frame, the frame's steps go in up to 4 runs, with the pairs found again
+  before each. Anything faster still slows to what 4 runs can see: about 80 m/s at 30 fps and below (240 at 90 fps).
+- Offline, a sheet shredded and blasted at 50 m/s with Drag 0.02: next to six players, 230 ms a frame at 10 fps is now
+  10 ms, and 11.5 ms at 144 fps is now 4.1; over a mesh floor, 68 ms at 10 fps is now 14. The blast's own frame next to
+  a player still takes about 19 ms, once.
+- The stats line also shows the pairs and the runs.
+- No synced field changed: the compatibility hash stays `z3JAnL1n9ZsPDsV9CfabPA==`, so 0.33.0 and 0.33.1 can share a
+  session. Plugin only; the renderer fork is unchanged.
+- Offline: `cloth` (187, with the new `cloth-fast`), `body` (30) and `plugin-check` (159) pass. Details:
+  DESIGN-cloth.md, "Built in 0.33.1".
+
+0.33.0 (copies and a mend timer): **the torn pieces stay on the ground while the cloth comes back whole.** Lenki: "a
+boolean for duplicate mesh (clicking reform on the mesh or turning it off would leave the extra cloth on the ground but the
+original mesh would reappear too) a Mend Timer and a Cloth Lifeteam".
+- **`MendTimer`** (new on Cloth, seconds, 0 = off): the cloth mends itself that many seconds after it first tears or a
+  blast hits it. The client that decides the tears does it, for everyone. With WaitForBlast it then goes back to sleep.
+- **`DuplicateOnMend`** (new, off by default; world cloth only): a Mend (the button or MendTimer), or turning the Cloth
+  component off, leaves the loose pieces behind as a copy, and the original comes back whole. A loose piece is one that
+  no pinned or anchored point holds: what fell off, or a whole free blanket. The parts still hanging on belong to the
+  original, so the copy leaves them out. Nothing loose, no copy.
+- The copy keeps falling until it settles (at most 20 s), then stays still and costs nothing more.
+- **`CopyLifetime`** (new, seconds, default 30, 0 = until the world closes): how long a copy stays. At most 4 copies per
+  cloth (a fifth removes the oldest); removing the Cloth removes its copies.
+- Each person sees their own copy. It is local: a "Cloth copy (local)" slot under the world root, whose ClothDebris
+  component shows its state. It is never synced or saved, so someone who joins later doesn't see it.
+- New synced fields and a new component, so a new compatibility hash (`z3JAnL1n9ZsPDsV9CfabPA==`): everyone in a session
+  needs 0.33.0. Plugin only; the renderer fork is unchanged.
+- Offline: `plugin-check` (159) and `cloth` (169) pass. Handing the mesh from the cloth to its copy only runs in game,
+  so it is untested until then. Details: DESIGN-cloth.md, "Built in 0.33.0".
+
+0.32.0 (effect cloth): **a sheet that sits still until a blast tears it apart.** Lenki: "make it a target field", and
+"a tough sheet that doesnt have any sim on, but as soon as a blast hits it. it activates and tears apart".
+- **`WaitForBlast`** (new on Cloth, off by default): the cloth stays asleep until a Cloth Blast hits it. While asleep it is
+  the plain mesh: nothing is built or simulated, so it costs nothing. The first blast wakes it with that blast's push,
+  freed points and shred. **Mend** puts it back to sleep. To paint it, turn WaitForBlast off first.
+- For a sheet that bursts where it's hit: leave it all pinned (`StartAs` AllPinned), and tick **Tearable** and
+  **WaitForBlast**. A blast with **Release** on frees and shreds the part within its `Radius`; the rest stays put.
+- **`Target`** (new on ClothBlast): the one cloth this blast hits. Empty hits every cloth within `Radius`, as before.
+  Attach a ClothBlast on a cloth's slot, or under it, and Target fills itself in with that cloth. The target still has to
+  be within Radius; `LastFired` says when it's out of reach, and counts the cloths a blast woke up.
+- Someone who joins after the blast sees the woken cloth torn the same way, but doesn't get the push.
+- New synced fields, so a new compatibility hash (`KSSeqECB018olW3qrCL/+A==`): everyone in a session needs 0.32.0.
+  Plugin only; the renderer fork is unchanged.
+- Offline: `plugin-check` (152) and `cloth` (157) pass. Waking up is plugin code that only runs in game, so it is
+  untested until then. Details: DESIGN-cloth.md, "Built in 0.32.0".
+
+0.31.0 (cloth blasts): **cloth that blows apart.** Lenki: skinned cloth first, then more on cloth explosions; these are
+the explosions.
+- New component under **Physics**: **ClothBlast**. Put it on a slot and press **Fire** (it is also an Action other things
+  can call). Every Cloth within `Radius` (1 m) of the slot is pushed away from it: `Strength` m/s (8) at the centre, less
+  toward the edge, nothing past it. Below 0 it pulls in. `Randomness` (0.3) makes the push uneven, in patches.
+- **`Release`** (on): the points it reaches let go of the paint, the anchors and `MaxDistance`, and stay free until a
+  **Mend**. It goes by where the cloth was modelled, so it acts on cloth that still hangs near its modelled place (a
+  banner's pinned corner lets go where the blast hits it).
+- **`Shred`** (0.5) on a **Tearable** cloth: rips it apart within the radius. Low gives a few big pieces, 1 gives confetti
+  (every triangle on its own). The pieces are the same for everyone. A big shred spreads out over a few frames.
+- World cloth now has room for up to 5 times its points in tears (at most 24,000 more), so a shred can go all the way to
+  confetti. Before, a cloth could only gain a quarter more points, so a big rip stopped at strips and chunks.
+- On an avatar's cloth a blast only pushes.
+- Each cloth keeps its blasts in a hidden `Blasts` list (up to 128; **Mend** clears them with the tears). Everyone's cloth
+  gets the push once, when the blast arrives (someone who joins later doesn't). The freed points and the pieces are the
+  same for everyone, latecomers too: the client that decides tears adds the shred to `Tears`, a part at a time.
+- `LastFired` shows what the last Fire on this client hit. The cloth's `Status` lists its blasts, freed points and cuts.
+- A new component and synced list, so a new compatibility hash (`b+1olm1+THO/uW80lgRfRw==`): everyone in a session needs
+  0.31.0. Plugin only; the renderer fork is unchanged.
+- Offline tests: `tests -- cloth-blast` (61 checks: cut lines and slits, piece sizes, confetti, the replay with splits in
+  between, seams and double-sided cloth, running out of room, release, the push's momentum, avatar cloth, timing),
+  `cloth` (all three, 157), `body`, `skin`, `gpu-path` and `plugin-check` (151). Not yet tried in game. Details:
+  DESIGN-cloth.md, "Built in 0.31.0".
+
+0.30.0 (avatar cloth, phase 2 of DESIGN-cloth.md): **skirts, capes, sleeves and hair that swing.** Lenki: skinned cloth
+first, then more on cloth explosions.
+- Put a **Cloth** on an avatar's **SkinnedMeshRenderer**. It starts all held, so nothing moves ("waiting for paint"). Paint
+  the parts that should move white with the Softbody brush: they hang from the dark parts, which follow the avatar exactly.
+  Material targeting and Mirror (0.28.0) work as on the softbodies.
+- A free point stays within brightness × `MaxDistance` of where the animation (blendshapes included) puts it. On a
+  SkinnedMeshRenderer `MaxDistance` starts at 0.15 m.
+- **`Inertia`** (new, 0.75): how much of the avatar's own motion the cloth feels late. 0 moves with the body, 1 trails
+  like real cloth. A turn of over 25° in one frame (a snap turn) is carried whole; a jump of 0.75 m or more (a teleport)
+  starts the cloth again where the animation has it.
+- **`Backstop`** (new, 0.02 m): free cloth goes no further than this behind its animated place, into the body. 0 turns it
+  off.
+- Players push it, with their body shapes (0.29.2). The wearer's own body pushes it no further out than the avatar has it
+  (thick thighs don't puff a skirt out), and the wearer's own colliders are left out.
+- On screen it stays GPU-skinned: the renderer's copy binds the moving vertices to one bone, and only they are sent each
+  frame. It needs the Softbody renderer (the fork, or the SoftbodyRenderer patch). Culled or `Simulating` 0, the cloth
+  follows the animation as modelled.
+- **Tears** need the 0.30.0 renderer fork: it takes the triangles, UVs and colours of a skinned mesh in place (handshake
+  v2). The copy has spare vertices for them (half the moving part, 64 to 20,000). With an older renderer an avatar's
+  cloth doesn't tear, and `Status` says so.
+- Caps: meshes up to 250,000 vertices; up to 8,000 simulated points per cloth. Layered garments (an inner shell bound to
+  the outer) are not done yet.
+- Also for **world cloth**: a cloth on a scaled slot now hangs at the size it shows. 0.29.x measured it in the mesh's own
+  units, so a sheet on a slot scaled 2x pulled itself to half its size.
+- New synced fields (`Cloth.Inertia`, `Cloth.Backstop`), so a new compatibility hash (`R3xS7dQ81MFZDCrtFT0Wpw==`):
+  everyone in a session needs 0.30.0.
+- Offline tests: `tests -- avatar-cloth` (59 checks, on a two-bone skirt with a blendshape: the region, the copy against
+  the engine's own skinning, tears through the engine's encoder, follow, inertia, snap turns, teleports, the backstop,
+  the wearer's body, the scaled slot, the fork's handshake), `cloth` (both), `gpu-path`, `body`, `skin` and
+  `plugin-check`. Not yet tried in game. Details: DESIGN-cloth.md, "Built in 0.30.0".
+
+0.29.2 (cloth on players): **a blanket rests on the body you see.** A friend's blanket kept slipping off or clipping
+in: players' bone colliders (capsules on the major bones) leave gaps, and many avatars are thicker than them.
+- Each avatar near a cloth gets a **body shape**: a few hundred spheres fitted just inside its skinned meshes (once, in
+  the bind pose, on a worker), moved every frame by the mesh's own bones the way the mesh is skinned, so they follow
+  the skin you see. A cloth looks only at players whose head is within 2.5 m of it, and poses only the parts near it.
+- The fit: surface samples about 1 cm apart; at each, the largest ball inside the skin that touches it (6 mm to 6 cm),
+  stopping at a slab's far face or a box's edge; then the fewest that cover the skin to within 5 mm. Thin or one-sided
+  parts (wing membranes, capes, ears, two-sided sheets) get none; clothes over skin, and pieces of the mesh pushed into
+  others, don't squeeze the outer layer's spheres.
+- **Grip:** a point resting on a player holds on against a sideways pull of 3.75 m/s² per unit of `Friction` (3 m/s²
+  at the default 0.8) on top of what its weight gives, so a blanket stays on a body's slopes and is carried along when
+  the body moves, unless pulled harder. Players' shapes only; world colliders are as before.
+- **Moving with the body:** each sphere carries the cloth by its own speed and its bones' turn, so a blanket on a body
+  that turns on the spot turns with it. Speeds count up to 5 m/s; a body that jumps more than half a metre in a frame
+  (a teleport) counts as still.
+- While an avatar's meshes load or its fit runs, or when a mesh can't be read (not a loaded StaticMesh, or over 600k
+  vertices), that player keeps the bone colliders, as before. `Status` says how many players are on body shapes, being
+  shaped, or on bone colliders (and why).
+- Limits: blendshapes are left out (the spheres follow the bones only); static meshes on an avatar are left out; an
+  outfit change refits; Fluid still uses the bone colliders.
+- Cost, on the 0.6 m test avatar: 427 spheres, fitted in 0.4 s on one core. A 1 × 1.6 m blanket (1519 points) draped
+  over it costs about 1.5 ms a frame more than on a floor (finding the spheres near it 0.7 ms, the contacts 0.7 ms).
+- Plugin only, no synced member: the hash stays 0.29.0's (`yRNQ3JLTOETHk+0whwfqtA==`), so 0.29.0 to 0.29.2 share a
+  session.
+- Offline tests: `tests -- body` (30 checks: limbs, bends, sheets, slabs, boxes, a sleeve over an arm, grip on a slope,
+  a turntable, a teleport, the test avatar fitted and posed, a blanket on it), `cloth`, `budget` and `plugin-check`.
+
+0.29.2 also fixes **the smoke shader** (renderer fork and its bundle; the plugin is unchanged). From 0.27.0 to 0.29.1 it never
+drew in game. Unity 2019.4.31 builds the bundle, and it writes each D3D11 program with a header that the game's renderer (Unity
+2019.4.19) does not know. So Direct3D refused them all, and the log filled with "ShaderProgram is unsupported" (168 MB in one
+evening).
+- The bundle's programs are now rewritten for 2019.4.19 (`SoftbodyShaders\fix_d3d11_programs.py`, run by `build.ps1`).
+- The fork draws a test puff off-screen before it uses the shader. If the puff doesn't draw, or the renderer later reports a
+  program it can't make, the smoke and foam go back to the old Unlit discs. The log says which.
+- Details: DESIGN-gas.md, "0.29.2: the smoke shader on the game's renderer". Not yet tried in game.
+
+0.29.2 also makes **ThickLiquid look as thick at any particle size** (renderer fork only; the plugin is unchanged). In a world
+with 7.5 cm particles it "didn't do much". Its viscosity was the same at every size, so the bigger flows of a world built for
+bigger particles ran runnier, and at Viscosity 15 and under, turning ThickLiquid on even made the liquid runnier than off.
+- A thick liquid's viscosity now grows with the particle size: twice the size, twice the viscosity. At 2.5 cm nothing
+  changes.
+- In a dam break scaled to the particle size, 7.5 cm now spreads and slumps as 2.5 cm does: within 35 mm (scaled) in its first
+  2 s. Before, it ran up to about 125 mm further.
+- It is still held to Viscosity 15 at every size. At 7.5 cm, 15 takes about 18 solver iterations a solve (32 at 2.5 cm).
+- One scene switched to bigger particles now gets thicker than before. It already did, since coarse particles damp more.
+- With ThickLiquid off, a Viscosity above 1 still thickens more at bigger particle sizes (XSPH), as before.
+- Details: DESIGN-fluid.md, "0.29.2 (fork): the thick liquid at any particle size". Not yet tried in game.
+
+0.29.1 (the Budget pause): **a lag spike no longer stops a softbody.** Until 0.29.0 one long frame was enough: it
+pushed the 20-frame average over `Budget` (or took over 100 to 150 ms on its own), and the Softbody, SkinnedSoftbody or
+Cloth paused until a setting changed. Lenki asked for it to stop only once it stays over its limit for a minute or two.
+- It pauses when its cost per frame, **averaged over the last minute** of running, is over `Budget`.
+- Or sooner, when the **last 10 s average over 4 times `Budget`** (18 ms at the default 4.5), so one that really drags
+  the frame rate down does not run for a whole minute.
+- A single long frame never pauses it on its own any more. A 150 ms spike moves a minute's average by about 0.03 ms.
+- Only running time counts. A gap between frames (a hitch, a disabled renderer, culling) counts as at most 0.25 s, so a
+  pause never fills the minute with empty seconds.
+- While the last 10 s averaged over the budget, `Status` says so ("over budget lately ...: it pauses if that lasts a minute").
+- Logic only (`Core/BudgetWatch.cs`), no synced member: the hash stays 0.29.0's (`yRNQ3JLTOETHk+0whwfqtA==`), so 0.29.0
+  and 0.29.1 share a session.
+- Offline tests: `tests -- budget` (12 checks: spikes, hitches, steady overruns, gaps, repeated freezes) and
+  `plugin-check` (139/139).
+
+0.29.0 (cloth, phase 1 of DESIGN-cloth.md): **world cloth that tears.** Lenki picked world cloth first; avatar cloth is
+0.30.0. Two new components under **Physics**:
+- **Cloth**, next to (or above) a MeshRenderer with a StaticMesh: flags, banners, curtains, sails, tablecloths, hammocks.
+  - It starts all pinned (`StartAs` AllPinned), so nothing moves until you paint. With the Softbody brush, white hangs free
+    and black stays put (Mirror and the material filter work as on the softbodies). `AllFree` starts it all free;
+    `MeshColors` takes the mesh's own vertex colours. The paint is not drawn on the cloth: turn on `DebugCloth` to see it.
+  - **Anchors**: slots that hold the points within `AnchorRadius` (5 cm) of them when the cloth is built; the nearest anchor
+    wins. Put a Grabbable on one to drag a corner, or hang a banner between two poles. Anchors move through Resonite's own
+    sync, so every client's cloth follows them.
+  - The fabric (live): `Weight` (g/m², 200), `Stretch` (0 = doesn't stretch), `Bend` (0.3), `Damping`, `Drag` and `Lift`
+    (air, per triangle), `Gravity`, `Friction`, `Thickness` (how close it gets to colliders, 1 cm), `StepRate` (720 steps a
+    second), `MaxDistance` (0 = no limit; above 0 a free point stays within its brightness times this of where it was
+    modelled).
+  - It hits solid world colliders (`Collide`) and players' bodies and hands (`CollidePlayers`). Colliders on the cloth's own
+    slot and on its anchors are left out (an imported model often carries a MeshCollider of the cloth itself).
+  - **Tearing** (`Tearable`, off by default): an edge rips once it is longer than `TearAt` (1.5) times its rest length, at
+    most 8 rips a frame. `TearSpread` weakens the edges next to a fresh rip, so it runs along a line. **Mend** (a button)
+    puts it back together.
+  - A procedural mesh needs its Bake Mesh button first. A SkinnedMeshRenderer is refused for now (avatar cloth is 0.30.0).
+  - Caps: 8,000 points per cloth (after welding the seams) and 24,000 cloth points on each client.
+- **ClothWind**: blows on every Cloth in the world along its slot's forward (blue) axis. `Strength` (m/s, 5), `Gusts`,
+  `GustRate`, `Turbulence` (swirls that make a flag flap), `SwirlSize`, and `Radius` (0 blows everywhere; above 0 it is a
+  fan, only in front of the slot). World time is its clock, so every client's cloth feels the same wind.
+
+How it runs:
+- Each client simulates its own cloth on a worker thread. The folds are not synced (they match closely, not exactly).
+  **The tears are**: the client that decides tears appends each one to the hidden `Tears` list, and every other client
+  (and anyone who joins later, or loads the world) replays the list on its own cloth. The host decides, unless it is
+  headless; then the user with the lowest allocation ID does. While that user is in another world, nothing tears.
+- The cloth shows its own copy of the mesh (as instanced SkinnedSoftbodies do), so other objects using the same mesh are
+  not touched. Removing the component gives the renderer its shared mesh back.
+- `Simulating` 0 shows the mesh as modelled. Past `CullDistance` (30 m) it freezes on this client. A teleport or a jump of
+  the slot over 2 m carries the cloth along instead of flinging it.
+- The solver is XPBD at a fixed step: edges (two passes a step; a squeezed edge pushes back at a tenth of the force, so a
+  fine sheet does not buckle in its own plane), bending between the two points across each edge, air drag and lift per
+  triangle, and collisions with friction. No self-collision yet (planned for 0.37.0).
+
+Also in 0.29.0: **the vertex-colours fix (plugin side).** A SkinnedSoftbody (and a Softbody on a skinned mesh, GPU path)
+on a mesh with vertex colours stopped right after it started: the plugin sent the colours with the positions, and the
+renderer fork takes only positions, normals and tangents in place, so it rebuilt the mesh. Now skinned meshes never send
+colours; the mesh keeps its own, and the paint still sets the softness. Found by reading the code; not seen in game.
+
+- New components, so a new compatibility hash (`yRNQ3JLTOETHk+0whwfqtA==`): everyone in a session needs 0.29.0.
+- **Plugin only:** the renderer fork is 0.27.0's, unchanged. Installing means copying `Softbody.dll`.
+- Offline (`tests/ClothTests.cs`, `dotnet run -c Release --project tests -- cloth`):
+  - a 41 by 41 hanging sheet stretches 0.6% and comes to rest;
+  - draping over a ball and a floor never goes deeper than `Thickness`, and friction holds it;
+  - a flag in wind looks the same at 60 fps and at a frame rate jumping between 30 and 144;
+  - `MaxDistance` holds;
+  - tearing stays valid, replays index for index, and Mend gives back the original;
+  - the drawn mesh sits on the simulation, with the back of a sheet turned around and tangents that follow the UVs.
+  - `cloth-cost` also times it (a benchmark; not yet run).
+- **Known limit:** `Bend` mostly changes how sharp folds and wrinkles are. At these weights even Bend 1 can't hold a 40 cm
+  flap out straight (it droops 37 cm, against 38 cm at Bend 0), much like real fabric; stiff materials need a better
+  bending model.
+
+0.28.0 (paint brush): **mirror painting and material targeting.** Lenki wanted Blender-style mirror painting, and a way
+to paint one material without touching the others. Both are on the brush's context menu.
+- **Mirror** (menu item **Mirror: X**; it cycles off, X, Y, Z; new brushes start on X): every dab also lands on the other
+  side of the model.
+  - The mirror plane goes through the model's origin, or through the middle of its bounds when that is clearly more
+    symmetric. The brush measures it once per model and axis (about 9 ms on 43,000 triangles).
+  - It works on the rest pose (the model as it was made), so a posed or moving avatar still mirrors left to right.
+  - A second bubble shows where the mirror half lands. A model less than 60% symmetric across the axis isn't mirrored, and
+    the status says how symmetric it is.
+  - A dab on the centre line isn't doubled. A mirrored dab is one dab with two centres: it paints each vertex once and
+    counts once towards the 4000 dabs.
+  - Blur and Erase mirror too. Erase removes the dabs under the brush or under its mirror bubble; a mirrored dab with only
+    one centre under it keeps its other half.
+- **Material** (one menu item that cycles **any**, **where I start**, then **only #1 …**, **only #2 …** for each material of
+  the model the brush was over when the menu opened):
+  - **any**: as before. Old paint counts as any.
+  - **where I start**: each stroke keeps to the material its first dab lands on.
+  - **only #n**: the brush paints only that material and aims through the others (the laser passes through them).
+  - A dab kept to a material changes only that material's vertices, and its blur averages only that material's
+    neighbours. A vertex shared by two materials counts as both.
+  - Materials are numbered in the order of the renderer's Materials list, and named after their slot.
+  - With a material set, Erase leaves the dabs of other materials alone.
+- New synced fields (on the dabs and the brush), so a new compatibility hash (`MkgpgQd8U0qiTZbXa2oGPw==`): everyone in a
+  session needs 0.28.0.
+- **Plugin only:** the renderer fork is 0.27.0's, unchanged. Installing means copying `Softbody.dll`.
+- A brush saved before 0.28.0 mirrors too (on X) but has no second bubble. Spawn a new one (SpawnBrush) to get it.
+- Offline (`tests/MirrorTests.cs`): mirrored and material dabs match a brute-force reference (within 1.4e-6), a centre-line
+  vertex gets one dab's worth, and 1000 mirrored dabs paint in 2.1 ms on 43,000 triangles.
+
 0.27.0 (fluid and gas): **smoke swirls, foam and thick liquid.** These are the three solver prototypes Lenki picked from
 SoftbodyRnD (see its RND-REPORT.md). All three are off by default, so existing worlds look the same. They run on the GPU only
 (the Softbody renderer fork); on the CPU they do nothing, and the status says so.
@@ -13,9 +387,11 @@ SoftbodyRnD (see its RND-REPORT.md). All three are off by default, so existing w
   and bubbles where the liquid splashes, breaks into waves or traps air. They are drawn as small soft discs, whiter than the
   liquid. Calm liquid makes none. At 2.5 cm particles it is mostly foam and bubbles; spray is rare.
 - **`FluidEmitter.ThickLiquid`** (default off): a `Viscosity` above 1 becomes a real viscosity (an implicit solve) instead of
-  extra smoothing passes. A thick liquid then keeps a spin and a rounded shape, sags and folds instead of slumping into a ramp,
-  and is equally thick at every particle size. About 4 is honey, 10 is 0.08 m²/s, and it is held to 15 (0.9 m²/s). Above
-  that the solve gets too slow. Water (1 and under) is untouched.
+  extra smoothing passes. A thick liquid then keeps a spin and a rounded shape, sags and folds instead of slumping into a ramp.
+  At 2.5 cm particles, about 4 is honey, 10 is 0.08 m²/s, and it is held to 15 (0.9 m²/s). Above that the solve gets too
+  slow. Water (1 and under) is untouched. (0.29.2: its viscosity grows with the particle size, so it looks about as thick
+  at any size; 0.27.0 gave every size the same viscosity. Thick grip, 2026-11-14: it grips the shapes it touches, and it
+  goes up to 20; see the top.)
   - It costs GPU time: at Viscosity 15, about 10 ms a frame more than today's thick liquid for 100,000 particles of it
     (RTX 4070, SoftbodyRnD).
 - **The smoke shader** (renderer fork only): the gas, and the spray, foam and bubbles, are drawn with the fork's own shader
@@ -495,7 +871,7 @@ How it works (details in `DESIGN-skinned.md`):
 | `Collide` | on | collide at all: solid world colliders (`CharacterCollider` on) and the players below; see *What it collides with*. Each skin point's sphere is half its animated neighbour spacing (0.11.3: follows scale and blendshapes) |
 | `CollideSelf`, `SelfHead`, `SelfBody`, `SelfHands` | on | self-collision with this avatar's own bone colliders, by part (0.12.0) |
 | `CollideOthers`, `OthersHead`, `OthersBody`, `OthersHands` | on | other users' colliders, by part (0.12.0) |
-| `Budget` | 4.5 ms | pauses itself if the world thread pays more than this per frame |
+| `Budget` | 4.5 ms | pauses itself if the world thread pays more than this per frame, averaged over a minute (or 4 times it over 10 s; 0.29.1: a lag spike no longer does) |
 | `HueLayers` | empty | more soft layers, one per hue, each its own simulation with its own settings; see *Hue layers* (0.13.0) |
 | `CullDistance` | 20 m | past this distance from you, your client stops simulating and colliding it and shows it at rest; resumes inside 90 % of it (0 = never) (0.12.0) |
 | `DebugTets`, `DebugColliders` | off | draw the tets / collision spheres and colliders (local, from each client's own sim) |
@@ -664,7 +1040,7 @@ avatar body (`tests/data`, see *Build / test*); it has not been run in game yet.
 | `Friction` | 0.8 | 0..4 against the ground and proxies | **live** |
 | `Iterations` | 8 | 1..32 solver iterations | **live** |
 | `Collide` | true | ground ray + nearby Box/Sphere colliders | **live** |
-| `Budget` | 4.5 | 0.5..50 ms: auto shut-off. If this softbody's average cost per frame on a client goes over this, it pauses there (Status says why). Raise it, or change any setting, to retry | **live** |
+| `Budget` | 4.5 | 0.5..50 ms: auto shut-off. If this softbody's cost per frame on a client, averaged over a minute, goes over this (or over 4 times it for 10 s), it pauses there (Status says why; 0.29.1: a lag spike no longer does). Raise it, or change any setting, to retry | **live** |
 | `DebugCells` | false | draws the cage (see *Debug views*) | **live** |
 | `DebugColliders` | false | draws the collision spheres and what they collide with (see *Debug views*) | **live** |
 | `Enabled` | true | off = original mesh back | stop/start |
@@ -772,6 +1148,9 @@ radius and colour, and a hit marker; `Tool.OnAttach` adds the `ObjectRoot` and `
 | `Hardness` | 0.5 | 0..1, fraction of the radius at full strength |
 | `Mode` | Paint | Paint; **Blur** (softens transitions: see below); Erase (removes dabs centred inside the brush); Pick (takes the colour under the brush, then back to Paint) |
 | `Spacing` | 0.3 | dab distance along a stroke, fraction of the radius |
+| `Mirror` | X | 0.28.0: Off, X, Y or Z: also paint the mirror image across that axis (see 0.28.0 at the top) |
+| `OnlyMaterial` | Any | 0.28.0: Any; StrokeStart (each stroke keeps to the material it starts on); Chosen (only `ChosenMaterial`) |
+| `ChosenMaterial` | 1 | 0.28.0: the material for Chosen, counted from 1 in the renderer's Materials list |
 | `Status` | | local: what the brush is over or did last |
 
 **Controls.**
@@ -788,7 +1167,7 @@ radius and colour, and a hit marker; `Tool.OnAttach` adds the `ObjectRoot` and `
   SkinnedSoftbody hue layer or a Softbody hue band picks, keeping the brightness, so the softness; none is grey/white, the
   base layer), **Soft**, **Half** and **Firm (black)** (0.13.0: in the current hue; Half is brightness 0.5 in the colour
   space of the mesh you paint, 0.5 linear on most imports). Picking a colour any other way (Change color, Pick) moves Hue
-  to the nearest one.
+  to the nearest one. **Mirror** and **Material** (0.28.0: see 0.28.0 at the top).
   **Undo last stroke** (removes the dabs of your last stroke) and **Clear all paint** (on the Softbody you are pointing at
   or painted last).
 - **Spawning one (0.11.3):** press **SpawnBrush** in a Softbody's or SkinnedSoftbody's inspector, and a brush appears half a

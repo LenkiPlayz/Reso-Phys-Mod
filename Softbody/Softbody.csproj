@@ -14,7 +14,7 @@
     <!-- The assembly name is part of every saved/synced type name ([Softbody]Softbody.Softbody): never rename it. -->
     <AssemblyName>Softbody</AssemblyName>
     <RootNamespace>Softbody</RootNamespace>
-    <Version>0.27.0</Version>
+    <Version>0.36.0</Version>
     <!-- 0.16.0: the GPU fluid's shared channel (GpuFluid/Shared) is compiled in as internal types -->
     <DefineConstants>$(DefineConstants);SOFTBODY_PLUGIN</DefineConstants>
     <Product>Softbody</Product>
@@ -31,8 +31,8 @@
   <ItemGroup>
     <!-- The offline tests live in tests/ and link Core/*.cs themselves; legacy/ is the old 0.1.0 RML mod, kept for reference only;
          Renderer/ is the separate renderer-side plugin (SoftbodyRenderer, net472, built on its own). -->
-    <Compile Remove="tests\**;legacy\**;Renderer\**;GpuFluid\**" />
-    <None Remove="tests\**;legacy\**;Renderer\**;GpuFluid\**" />
+    <Compile Remove="tests\**;legacy\**;Renderer\**;GpuFluid\**;GpuGI\**" />
+    <None Remove="tests\**;legacy\**;Renderer\**;GpuFluid\**;GpuGI\**" />
     <Compile Include="GpuFluid\Shared\FluidChannel.cs" />
   </ItemGroup>
 

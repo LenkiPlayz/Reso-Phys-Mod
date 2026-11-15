@@ -10,6 +10,8 @@ What is in it
   payload\Softbody.dll       the plugin
   payload\Renderite.Unity.dll  Resonite's renderer library with the Softbody patch
                              (Renderite is MIT licensed, see LICENSE-Renderite.txt)
+  payload\softbody_smoke.bundle  the smoke shader; the manager puts it in the
+                             renderer fork with the patch
   payload\manifest.json      versions and checksums
 
 Setting it up (once)
@@ -31,9 +33,13 @@ The manager looks for a new version from Lenki each time it opens (it asks GitHu
 nothing about you is sent). When there is one, it shows "Update to Softbody x.y.z":
 close Resonite and press it. It downloads the new files (about 1 MB, or about 50 MB
 when the manager itself is new too), checks that Lenki signed them, installs them
-(the old ones are kept in Resonite\SoftbodyBackups), puts the new patch into your
-renderer fork, and restarts itself when it was updated too. Softbody stays on or off,
-as it was. No new zip needed.
+(the old ones are kept in Resonite\SoftbodyBackups), puts the new patch (and the
+smoke shader) into your renderer fork, and restarts itself when it was updated too.
+Softbody stays on or off, as it was. No new zip needed.
+
+If the renderer fork step says "Finish the renderer fork", the fork lacks the smoke
+shader (smoke then shows as plain discs): close Resonite and press Repair. Right after
+the update to 0.27.0 the new manager does this by itself when it restarts.
 
 Stable and unstable builds
 --------------------------

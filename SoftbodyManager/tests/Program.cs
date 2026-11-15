@@ -506,6 +506,141 @@ try
               "made stable: Update offers it on the stable channel, nothing unstable is left");
         var old110 = await Updater.CheckAsync(http, source.Releases, pub, p6.Pack, commitA, new Version(1, 1, 0), ct);
         Check(old110.State == UpdateState.Available && old110.Remote.Tag == tagU, "a 1.1.0 manager gets it too");
+
+        // ------------------------------------------------------------------ 1.2.0: renderer files (0.27.0: the smoke shader)
+        Console.WriteLine("TEST renderer files (the smoke shader)");
+        const string bundle = "softbody_smoke.bundle";
+        byte[] bundleV1 = Encoding.UTF8.GetBytes("UnityFS smoke shader v1 " + new string('s', 3000)),
+               bundleV2 = Encoding.UTF8.GetBytes("UnityFS smoke shader v2 " + new string('t', 3000));
+        string Sha(byte[] b) => Convert.ToHexString(SHA256.HashData(b)).ToLowerInvariant();
+        PackManifest WithList(params ForkFile[] files) { var m = PackManifest.Parse(textS); m.ForkFiles = files.ToList(); return m; }
+        string WithFiles(string text, params (string name, byte[] body)[] files)
+        {
+            var m = PackManifest.Parse(text);
+            m.ForkFiles = files.Select(x => new ForkFile { Name = x.name, Sha256 = Sha(x.body) }).ToList();
+            return JsonSerializer.Serialize(m, new JsonSerializerOptions { WriteIndented = true });
+        }
+
+        // the list in the manifest is checked
+        Check(WithList(new ForkFile { Name = bundle, Sha256 = Sha(bundleV1) }).ForkFilesProblem() == null && PackManifest.Parse(textS).ForkFilesProblem() == null,
+              "a usable list of renderer files, and no list at all: fine");
+        var unusable = new[] { "../x.bundle", "..\\x.bundle", "sub/x.bundle", "C:x.bundle", "Softbody.dll", "renderite.unity.dll", "manifest.json", "update.json",
+                               "SoftbodyManager.exe", "x.bundle.part", ".hidden", "noextension", "CON.bundle", "nul.txt", "x..bundle", "x.bundle.", "a b.bundle",
+                               new string('x', 70) + ".bundle", "" };
+        var taken = unusable.Where(n => WithList(new ForkFile { Name = n, Sha256 = Sha(bundleV1) }).ForkFilesProblem() == null).ToList();
+        Check(taken.Count == 0, $"unusable names are refused ({unusable.Length} kinds)" + (taken.Count > 0 ? ": took " + string.Join(", ", taken) : ""));
+        Check(WithList(new ForkFile { Name = bundle, Sha256 = "nope" }).ForkFilesProblem() != null &&
+              WithList(new ForkFile { Name = bundle, Sha256 = Sha(bundleV1) }, new ForkFile { Name = bundle.ToUpperInvariant(), Sha256 = Sha(bundleV1) }).ForkFilesProblem() != null &&
+              WithList(new ForkFile[] { null }).ForkFilesProblem() != null &&
+              WithList(Enumerable.Range(0, 17).Select(i => new ForkFile { Name = $"f{i}.bundle", Sha256 = Sha(bundleV1) }).ToArray()).ForkFilesProblem() != null,
+              "a bad checksum, a name twice, an empty entry, too many: refused");
+        var brokenList = JsonSerializer.Serialize(WithList(new ForkFile { Name = "..\\evil.dll", Sha256 = Sha(bundleV1) }));
+        var jb = Updater.Judge(SignedUpdate.Sign(brokenList, ec).ToJson(), pub, p6.Pack, commitA, mgr12);
+        Check(jb.State == UpdateState.Failed && jb.Text.Contains("unusable name"), "a signed release with a broken list: refused: " + jb.Text);
+        var asOld = JsonSerializer.Deserialize<ManifestBefore120>(WithFiles(textS, (bundle, bundleV1)));
+        Check(asOld?.Tag == tagS && asOld.SoftbodySha256 == PackManifest.Parse(textS).SoftbodySha256,
+              "a manager before 1.2.0 reads a manifest with the list (it skips it), so it can apply such an update");
+
+        // Lenki's release with the smoke shader
+        var relR = ReleaseDir("release-smoke", newer, "smoke");
+        File.WriteAllBytes(Path.Combine(relR, bundle), bundleV1);
+        string tagR = tagS + "-r5";
+        var textR = WithFiles(ManifestText(tagR, relR, commitA, "smoke shader"), (bundle, bundleV1));
+        Upload(tagR, relR, SignedUpdate.Sign(textR, ec).ToJson());
+        lock (routes) routes[$"/o/s/releases/download/{tagR}/{bundle}"] = (200, bundleV1, null);
+
+        // a manager before 1.2.0 applies it: it downloads the two DLLs and the signed manifest, not the shader (the 1.2.0 Apply
+        // stands in for it: it puts in what the download has, and says what is missing)
+        var dl7 = Path.Combine(pack4, "payload.new");
+        Directory.CreateDirectory(dl7);
+        foreach (var name in new[] { "Softbody.dll", "Renderite.Unity.dll" }) File.Copy(Path.Combine(relR, name), Path.Combine(dl7, name));
+        File.WriteAllText(Path.Combine(dl7, PackManifest.FileName), textR, new UTF8Encoding(false));
+        var (p7, done7) = Updater.Apply(p6, dl7, null);
+        foreach (var line in done7) Console.WriteLine("  " + line);
+        var fs7 = Manager.ForkStatus(p7);
+        Check(p7.Pack.Tag == tagR && File.ReadAllText(Path.Combine(p7.Fork, Paths.RendererDll)).Contains("patch smoke") &&
+              Manager.PackLacks(p7).SequenceEqual(new[] { bundle }) && Manager.RepairNeeded(p7).SequenceEqual(new[] { bundle }) && !fs7.ok && fs7.text.Contains("press Repair"),
+              "after an older manager's update: the new patch is in, but the pack and the fork lack the shader; step 2 says Repair: " + fs7.text);
+
+        // the new manager's first start finishes it: the shader from the pack's own release, then into the fork
+        lock (routes) routes[$"/o/s/releases/download/{tagR}/{bundle}"] = (200, bundleV2, null);   // changed on the way
+        threw = false;
+        try { await Updater.FetchPackFilesAsync(http, source.Releases, p7, null, ct); } catch (InvalidDataException) { threw = true; }
+        Check(threw && !File.Exists(p7.PackFile(bundle)) && !Directory.GetFiles(pack4, "*.part", SearchOption.AllDirectories).Any(),
+              "a shader that does not match the signed manifest is refused, and nothing is left behind");
+        lock (routes) routes[$"/o/s/releases/download/{tagR}/{bundle}"] = (200, bundleV1, null);
+        var fetched = await Updater.FetchPackFilesAsync(http, source.Releases, p7, null, ct);
+        Check(fetched.SequenceEqual(new[] { bundle }) && Manager.PackLacks(p7).Count == 0 && File.ReadAllBytes(p7.PackFile(bundle)).SequenceEqual(bundleV1),
+              "repair: the shader downloaded into the pack");
+        var r7 = Manager.UpdateForkFiles(p7);
+        Console.WriteLine("  " + r7);
+        var forkBundle = Path.Combine(p7.Fork, Paths.ForkFilesDir, bundle);
+        fs7 = Manager.ForkStatus(p7);
+        Check(File.Exists(forkBundle) && File.ReadAllBytes(forkBundle).SequenceEqual(bundleV1) && fs7.ok && fs7.text.Contains("with the smoke shader") &&
+              Manager.RepairNeeded(p7).Count == 0, "repair: the shader in the fork's StreamingAssets\\Softbody; step 2 done: " + fs7.text);
+        Check(File.ReadAllText(p7.ParkedLog).Contains(bundle + " put in") && Manager.UpdateForkFiles(p7) == null &&
+              (await Updater.FetchPackFilesAsync(http, source.Releases, p7, null, ct)).Count == 0, "logged; doing it again changes nothing");
+
+        // the next release has a new shader: the 1.2.0 update downloads it with the DLLs and swaps it in
+        var relR2 = ReleaseDir("release-smoke2", newer, "smoke2");
+        File.WriteAllBytes(Path.Combine(relR2, bundle), bundleV2);
+        string tagR2 = tagS + "-r6";
+        var jsonR2 = SignedUpdate.Sign(WithFiles(ManifestText(tagR2, relR2, commitA, "smoother smoke"), (bundle, bundleV2)), ec).ToJson();
+        Upload(tagR2, relR2, jsonR2);
+        Latest(tagR2);
+        Listed(List((tagR2, false, false, withUpdate, "2026-11-14T10:00:00Z"), (tagR, false, false, withUpdate, "2026-11-13T10:00:00Z")));
+        st = await Updater.CheckAllAsync(http, source, pub, p7.Pack, commitA, mgr12, ct);
+        var o8 = Updater.Offer(st, Channel.Stable);
+        Check(o8.Main?.Remote.Tag == tagR2 && o8.Main.Remote.ForkFiles?.Count == 1, "the next release with a new shader is offered");
+        threw = false;
+        try { await Updater.DownloadAsync(http, source.Releases, o8.Main, pack4, null, null, ct); } catch (InvalidOperationException) { threw = true; }
+        Check(threw && PackManifest.Load(payload4).Tag == tagR, "a release that lacks its shader: refused, the pack untouched");
+        lock (routes) routes[$"/o/s/releases/download/{tagR2}/{bundle}"] = (200, bundleV2, null);
+        var dl8 = await Updater.DownloadAsync(http, source.Releases, o8.Main, pack4, null, null, ct);
+        Check(File.ReadAllBytes(Path.Combine(dl8, bundle)).SequenceEqual(bundleV2), "the update downloads the shader with the DLLs");
+        var (p8, done8) = Updater.Apply(p7, dl8, null);
+        foreach (var line in done8) Console.WriteLine("  " + line);
+        Check(File.ReadAllBytes(forkBundle).SequenceEqual(bundleV2) && Manager.ForkStatus(p8).ok &&
+              File.ReadAllBytes(Path.Combine(p8.Parked, "Renderer", $"{bundle}.{Sha(bundleV1)[..8]}.bak")).SequenceEqual(bundleV1),
+              "applied: the new shader in the fork, the old one kept in SoftbodyBackups\\Renderer");
+
+        // back to a release without the shader: it leaves the fork, into the backups
+        var backS = Updater.Judge(jsonS, pub, p8.Pack, commitA, mgr12);
+        var (p9, done9) = Updater.Apply(p8, await Updater.DownloadAsync(http, source.Releases, backS, pack4, null, null, ct), null);
+        foreach (var line in done9) Console.WriteLine("  " + line);
+        Check(backS.Older && !File.Exists(forkBundle) && File.ReadAllBytes(Path.Combine(p9.Parked, "Renderer", $"{bundle}.{Sha(bundleV2)[..8]}.bak")).SequenceEqual(bundleV2) &&
+              Manager.ForkStatus(p9).ok && File.ReadAllText(Path.Combine(p9.Fork, Paths.RendererDll)).Contains("patch stable"),
+              "back to a release without the shader: it leaves the fork (kept in the backups), the fork OK");
+
+        // and forward again; then the fork is made again: the shader goes in with it
+        var (p10, _) = Updater.Apply(p9, await Updater.DownloadAsync(http, source.Releases, Updater.Judge(jsonR2, pub, p9.Pack, commitA, mgr12), pack4, null, null, ct), null);
+        Check(File.ReadAllBytes(forkBundle).SequenceEqual(bundleV2) && Manager.ForkStatus(p10).ok, "forward again: the shader back in the fork");
+        Console.WriteLine("  " + Manager.SetUpFork(p10, null));
+        Check(File.ReadAllBytes(forkBundle).SequenceEqual(bundleV2) && Manager.ForkStatus(p10).ok, "the fork made again: with the shader");
+        File.Delete(p10.PackFile(bundle));
+        var su = Manager.SetUpFork(p10, null);
+        Console.WriteLine("  " + su);
+        Check(!File.Exists(forkBundle) && su.Contains("Repair") && Manager.RepairNeeded(p10).SequenceEqual(new[] { bundle }),
+              "a pack that lacks the shader: the fork is made without it, and Repair is offered");
+        await Updater.FetchPackFilesAsync(http, source.Releases, p10, null, ct);
+        Manager.UpdateForkFiles(p10);
+        Check(Manager.ForkStatus(p10).ok, "repaired");
+
+        // a pack with no release to fetch from, and a damaged list
+        File.Delete(p10.PackFile(bundle));
+        var noTag = Paths.ForPack(pack4, PackManifest.Load(payload4), game4, null);
+        noTag.Pack.Tag = null;
+        threw = false;
+        try { await Updater.FetchPackFilesAsync(http, source.Releases, noTag, null, ct); }
+        catch (InvalidOperationException ex) { threw = ex.Message.Contains("get the pack again"); }
+        Check(threw, "the shader missing from a pack with no release to fetch it from: it says to get the pack again");
+        var damaged = Paths.ForPack(pack4, PackManifest.Load(payload4), game4, null);
+        damaged.Pack.ForkFiles[0].Name = "..\\evil.dll";
+        threw = false;
+        try { Manager.UpdateForkFiles(damaged); } catch (InvalidOperationException) { threw = true; }
+        Check(!Manager.ForkStatus(damaged).ok && Manager.PackRendererMismatch(damaged) != null && Manager.PackLacks(damaged).Count == 0 &&
+              Manager.RepairNeeded(damaged).Count == 0 && threw && File.Exists(forkBundle),
+              "a damaged list in the pack: step 2 says so, nothing is fetched, moved or copied");
     }
     finally { server.Stop(); server.Close(); }
 
@@ -525,3 +660,19 @@ finally
 }
 Console.WriteLine(failures == 0 ? "ALL CHECKS PASSED" : $"{failures} CHECK(S) FAILED");
 return failures == 0 ? 0 : 1;
+
+/// <summary>1.2.0's tests: PackManifest as managers before 1.2.0 have it (no list of renderer files).</summary>
+sealed class ManifestBefore120
+{
+    public string SoftbodyVersion { get; set; }
+    public string SoftbodySha256 { get; set; }
+    public string CompatibilityHash { get; set; }
+    public string RenderiteCommit { get; set; }
+    public string RendererDllSha256 { get; set; }
+    public string Made { get; set; }
+    public string Tag { get; set; }
+    public string UpdateRepo { get; set; }
+    public string ManagerVersion { get; set; }
+    public string ManagerSha256 { get; set; }
+    public string Notes { get; set; }
+}

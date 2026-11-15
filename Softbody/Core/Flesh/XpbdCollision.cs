@@ -33,6 +33,9 @@ public struct FleshCollider
     /// <summary>0.11.4: how fast the collider moves (world m/s, translation). The solver sweeps it through the substeps
     /// (it arrives where it is given at the end of the frame) and uses it for friction.</summary>
     public Vector3 Velocity;
+    /// <summary>0.29.2: how fast it turns (world rad/s, about A), for friction only: a sphere on a turning bone carries the
+    /// cloth on it round with its surface, even where its centre hardly moves (the cloth only).</summary>
+    public Vector3 Omega;
     public TriangleBvh Mesh;
     public Matrix4x4 M, MInv;
     /// <summary>World bounds, filled by the solver when the shape enters a step (a cheap first test for every pair).</summary>

@@ -67,9 +67,22 @@ static class PrivateMeshes
 
     public static int Created, Unloaded;
 
+    /// <summary>0.30.0: each copy standing in, and the shared asset it stands in for.</summary>
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<FrooxEngine.Mesh, FrooxEngine.Mesh> _sharedOf = new();
+
+    /// <summary>
+    /// 0.30.0: the shared asset when <paramref name="mesh"/> is one of these copies standing in for it, else the mesh itself.
+    /// Readers of an avatar's mesh data (the body shapes) go by the shared asset: a copy's data is a softbody's or a cloth's
+    /// work (an avatar cloth's moves its vertices to one bone), and reading it would also restart them each time a copy
+    /// comes or goes.
+    /// </summary>
+    public static FrooxEngine.Mesh SharedOf(FrooxEngine.Mesh mesh) =>
+        mesh != null && _sharedOf.TryGetValue(mesh, out var shared) && shared != null ? shared : mesh;
+
     /// <summary>A new dynamic mesh asset holding <paramref name="data"/>, uploaded to the renderer in full;
-    /// <paramref name="done"/> runs (on the renderer-message thread) once the renderer has it.</summary>
-    public static FrooxEngine.Mesh Create(World world, MeshX data, BoundingBox bounds, object owner, AssetIntegrated done)
+    /// <paramref name="done"/> runs (on the renderer-message thread) once the renderer has it. 0.29.0: with
+    /// <paramref name="dynamic"/> the upload says the mesh will change every frame (Cloth).</summary>
+    public static FrooxEngine.Mesh Create(World world, MeshX data, BoundingBox bounds, object owner, AssetIntegrated done, bool dynamic = false)
     {
         var m = new FrooxEngine.Mesh();
         m.InitializeDynamic(world.Engine.AssetManager);
@@ -77,6 +90,7 @@ static class PrivateMeshes
         m.HighPriorityIntegration = true;
         var hint = default(MeshUploadHint);
         MeshUploadHintHelper.SetFromMesh(ref hint, data);
+        if (dynamic) hint[MeshUploadHint.Flag.Dynamic] = true;
         m.SetFromMeshX(data, hint, bounds, done);
         Interlocked.Increment(ref Created);
         return m;
@@ -99,6 +113,7 @@ static class PrivateMeshes
             _relocated.SetValue(copy, shared);
             _setType.Invoke(copy, new object[] { FrooxEngine.AssetType.Static });
             _setLoadState.Invoke(copy, new object[] { AssetLoadState.FullyLoaded });
+            _sharedOf.AddOrUpdate(copy, shared);
         }
         catch (Exception ex)
         {
@@ -114,6 +129,7 @@ static class PrivateMeshes
     public static void Retire(FrooxEngine.Mesh copy)
     {
         if (copy == null || Unavailable != null) return;
+        _sharedOf.Remove(copy);
         try
         {
             _relocated.SetValue(copy, null);

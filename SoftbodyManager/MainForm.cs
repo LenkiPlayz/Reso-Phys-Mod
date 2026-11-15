@@ -294,11 +294,68 @@ sealed partial class MainForm : Form
         {
             var progress = new Progress<string>(Log);
             IProgress<string> report = progress;
+            // 1.2.0: renderer files the pack lacks (an older manager applied its update) are fetched first; without them the
+            // fork is made all the same, and step 2 offers Repair
+            if (_paths.IsPack && Manager.PackLacks(_paths) is { Count: > 0 } lacking)
+            {
+                try
+                {
+                    Log($"downloading {Manager.Describe(lacking)} from Lenki's release {_paths.Pack.Tag} first ...");
+                    using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+                    await Updater.FetchPackFilesAsync(Http, Releases, _paths, progress, cts.Token);
+                }
+                catch (Exception ex) { Log($"could not download it ({ex.Message}): the fork is made without it"); }
+            }
             var done = await Task.Run(() => Manager.SetUpFork(_paths, s => report.Report(s)));
             Log(done);
         }
         catch (Exception ex) { Log("could not: " + ex.Message); MessageBox.Show(this, ex.Message, "Renderer fork", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         finally { _busy = false; RefreshAll(log: true); }
+    }
+
+    /// <summary>Step 2's button: Repair when the fork only lacks a renderer file the pack lists, else Set up.</summary>
+    void ForkStep()
+    {
+        if (_paths.IsPack && Manager.RepairNeeded(_paths).Count > 0) _ = RepairFork(auto: false);
+        else SetUpFork();
+    }
+
+    /// <summary>
+    /// 1.2.0: puts the pack's renderer files in the fork (0.27.0: the smoke shader), downloading the ones the pack lacks first,
+    /// from its own release. <paramref name="auto"/>: on start, when the pack lacks them: a manager from before 1.2.0 applied
+    /// the update (it skips them) and swapped in this one, whose restart it said would finish the update. Only the pack's folder
+    /// and the manager's own fork change; Resonite must be closed for the fork.
+    /// </summary>
+    async Task RepairFork(bool auto)
+    {
+        if (_busy || !_paths.IsPack) return;
+        _busy = true; RefreshAll(log: false);
+        try
+        {
+            var progress = new Progress<string>(Log);
+            if (Manager.PackLacks(_paths) is { Count: > 0 } lacking)
+            {
+                Log((auto ? "finishing the update: " : "") + $"downloading {Manager.Describe(lacking)} from Lenki's release {_paths.Pack.Tag} ...");
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+                await Updater.FetchPackFilesAsync(Http, Releases, _paths, progress, cts.Token);
+            }
+            if (Manager.RepairNeeded(_paths).Count > 0)
+            {
+                if (Manager.RunningResonite().Count > 0) Log("close Resonite, then press Repair (step 2) to put it in the renderer fork");
+                else
+                {
+                    var current = _paths;
+                    Log(await Task.Run(() => Manager.UpdateForkFiles(current)) ?? "the renderer fork has it already");
+                }
+            }
+            else if (auto && !Directory.Exists(_paths.Fork)) Log("the pack is complete; the renderer fork gets it when you set it up (step 2)");
+        }
+        catch (Exception ex)
+        {
+            Log((auto ? "could not finish the update: " : "could not: ") + ex.Message);
+            if (!auto) MessageBox.Show(this, ex.Message, "Repair", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally { _busy = false; RefreshAll(log: false); }
     }
 
     async void RebuildFork()

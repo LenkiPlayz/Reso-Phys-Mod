@@ -60,6 +60,14 @@ static partial class Program
             Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
             return _failures == 0 ? 0 : 1;
         }
+        // "gpu-path": only the partial-upload checks of the GPU path, without its timing (0.30.0: tears on avatar cloth go this way)
+        if (args.Contains("gpu-path"))
+        {
+            try { GpuPartialUpload(); }
+            catch (Exception ex) { Check(false, "GPU-path partial upload check ran: " + ex.GetType().Name + ": " + ex.Message); }
+            Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
+            return _failures == 0 ? 0 : 1;
+        }
         // "plugin-check": only the built plugin's and the renderer plugin's checks (0.26.0)
         if (args.Contains("plugin-check"))
         {
@@ -79,6 +87,13 @@ static partial class Program
             Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
             return _failures == 0 ? 0 : 1;
         }
+        // 0.29.2 (fork): "thick-size" measures the thick liquid at 2.5, 5 and 7.5 cm particles (no checks: numbers to design from)
+        if (args.Contains("thick-size")) { ThickSizeSweep(); return 0; }
+        if (args.Contains("thick-size-fit")) { ThickSizeFit(); return 0; }
+        // thick grip (fork, measuring): "thick-honey" measures the cap and the walls' grip (no checks; "quick": two cases)
+        if (args.Contains("thick-honey")) { ThickHoneyMeasure(); return 0; }
+        if (args.Contains("thick-size-grip")) { ThickSizeGripFit(); return 0; }
+        if (args.Contains("thick-cost")) { ThickCostMeasure(); return 0; }
         if (args.Contains("foam") || args.Contains("vortex") || args.Contains("thick") || args.Contains("fluid-0270"))
         {
             bool all = args.Contains("fluid-0270");
@@ -103,6 +118,65 @@ static partial class Program
             return _failures == 0 ? 0 : 1;
         }
         if (args.Length >= 2 && args[0] == "gas-preview") return GasPreview(args[1], args.Length >= 3 ? args[2] : "side");
+
+        // 0.29.2: players' body shapes for the cloth, and its grip (CPU only; "body-explore" prints the test model's bones)
+        if (args.Contains("body") || args.Contains("body-explore"))
+        {
+            BodyShapeTests(explore: args.Contains("body-explore"));
+            Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
+            return _failures == 0 ? 0 : 1;
+        }
+        // 0.36.0: only Pop's range of strengths (CPU only; "pop" runs these too)
+        if (args.Contains("pop-strength"))
+        {
+            PopStrengthTests();
+            Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
+            return _failures == 0 ? 0 : 1;
+        }
+        // 0.35.0: only Pop's soft pieces and adhesion (CPU only; "pop" runs these too)
+        if (args.Contains("pop-soft"))
+        {
+            PopSoftTests();
+            Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
+            return _failures == 0 ? 0 : 1;
+        }
+        // 0.34.0: Pop, a mesh burst into pieces: the cut and the pieces' flight (CPU only)
+        if (args.Contains("pop"))
+        {
+            PopTests();
+            Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
+            return _failures == 0 ? 0 : 1;
+        }
+        // 0.29.1: the Budget pause waits for a sustained overrun (CPU only, instant)
+        if (args.Contains("budget"))
+        {
+            BudgetWatchTests();
+            Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
+            return _failures == 0 ? 0 : 1;
+        }
+        // 0.29.0: world cloth (CPU only); 0.30.0: avatar cloth ("avatar-cloth" alone, or with the rest under "cloth");
+        // 0.31.0: the Cloth Blast ("cloth-blast" alone, or with the rest under "cloth"); 0.33.0: the copies a Mend leaves
+        // behind ("cloth-copy" alone, or under "cloth"); 0.33.1: fast pieces near players and over a mesh floor
+        // ("cloth-fast" alone, or under "cloth")
+        if (args.Contains("cloth") || args.Contains("cloth-cost") || args.Contains("avatar-cloth") || args.Contains("cloth-blast") || args.Contains("cloth-copy") || args.Contains("cloth-fast"))
+        {
+            bool only = args.Contains("cloth-blast") || args.Contains("cloth-copy") || args.Contains("cloth-fast");
+            if (args.Contains("cloth") || args.Contains("cloth-cost")) ClothTests(cost: args.Contains("cloth-cost"));
+            if (!only || args.Contains("cloth") || args.Contains("avatar-cloth")) AvatarClothTests();
+            if (args.Contains("cloth") || args.Contains("cloth-blast")) ClothBlastTests();
+            if (args.Contains("cloth") || args.Contains("cloth-copy")) ClothCopyTests();
+            if (args.Contains("cloth") || args.Contains("cloth-fast")) ClothFastTests();
+            Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
+            return _failures == 0 ? 0 : 1;
+        }
+        // 0.28.0: the paint layer on its own (CPU only): dabs, blur, mirror and material
+        if (args.Contains("paint") || args.Contains("skin"))
+        {
+            if (args.Contains("paint")) { PaintTests(); MirrorPaintTests(); }
+            if (args.Contains("skin")) SkinTests(); // the brush on posed (skinned) meshes uses the paint layer's BVH refit
+            Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
+            return _failures == 0 ? 0 : 1;
+        }
         // "gpu-fluid": only the GPU fluid (0.16.0)
         if (args.Contains("gpu-fluid"))
         {
@@ -195,6 +269,7 @@ static partial class Program
         LiveTuningSmoke();
         Timing();
         PaintTests();
+        MirrorPaintTests();
         SkinTests();
         GpuPathTests();
         LiteBufferTests();

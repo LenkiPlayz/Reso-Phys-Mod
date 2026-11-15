@@ -1,7 +1,7 @@
 """Makes a friend pack: exports\\SoftbodyFriendPack-<version>.zip, for friends to install Softbody with the manager, and
 (1.1.0) the files of a GitHub release, from which friends' managers update themselves.
 
-  python make_friend_pack.py [--notes "what is new"] [--tag v0.25.0] [--out DIR] [--force]
+  python make_friend_pack.py [--notes "what is new"] [--tag v0.25.0] [--out DIR] [--force] [--gi-off | --gi-as-is]
 
 It holds the self-contained Softbody Manager (no .NET needed on their PC), the Softbody build, the patched
 Renderite.Unity.dll from RendererSoftbody (only that file: the friend's manager makes the fork from their own renderer),
@@ -18,6 +18,15 @@ publish_release.py uploads: update.json (the manifest, signed with the key on th
 SoftbodyManager.exe and the pack's zip. A tag is published once: a new pack of the same version (a rebuilt fork, say) needs
 a new tag, e.g. --tag v0.25.0-r2. Without the two files the pack is made as before, with no updates. 1.2.0: publish_release.py
 puts a release out as a stable build (--stable: tested) or an unstable one (--unstable: only friends who press Try unstable).
+
+Renderer files (1.2.0): every file in the fork's Renderite.Renderer_Data\\StreamingAssets\\Softbody (0.27.0: the smoke shader,
+softbody_smoke.bundle, which make_softbody_renderer.py puts there) goes in the payload and the release, and the manifest lists
+it with its checksum (ForkFiles). Friends' managers from 1.2.0 on put it in their fork; one from before 1.2.0 skips it when it
+applies the update, and the manager it swaps in fetches it from the release on its first start.
+
+GI (2026-11-15): a fork made with make_softbody_renderer.py --gi (live bounce light, a test) has gi.ini among those files.
+A pack made from it needs --gi-off (friends' gi.ini says enabled = 0, so their light stays as it was until they set it to 1;
+this PC's own gi.ini is not touched) or --gi-as-is (friends get the gi.ini this PC runs).
 """
 import argparse
 import datetime
@@ -37,6 +46,9 @@ GAME = r"F:\SteamLibrary\steamapps\common\Resonite"
 BUILD = os.path.join(BASE, "Softbody", "bin", "Release", "net10.0", "Softbody.dll")
 MANAGED = os.path.join("Renderite.Renderer_Data", "Managed", "Renderite.Unity.dll")
 FORK_DLL = os.path.join(BASE, "RendererSoftbody", MANAGED)
+# 1.2.0: the fork's renderer files (0.27.0: the smoke shader's bundle), and where the bundles are built (only read, to compare)
+FORK_FILES = os.path.join(BASE, "RendererSoftbody", "Renderite.Renderer_Data", "StreamingAssets", "Softbody")
+SHADERS = os.path.join(BASE, "Softbody", "GpuFluid", "Shaders")
 OFFICIAL_DLL = os.path.join(GAME, "Renderer", MANAGED)
 INSTALLED = os.path.join(GAME, "Libraries", "Softbody.dll")
 LICENSE = os.path.join(BASE, "RenderiteSrc", "LICENSE.txt")
@@ -150,12 +162,69 @@ def manager_version():
     return m.group(1).strip() if m else None
 
 
+TAKEN = {"softbody.dll", "renderite.unity.dll", "softbodymanager.exe", "manifest.json", "update.json"}
+
+
+def usable_name(name):
+    """1.2.0: a renderer file's name as the manager takes it (PackManifest.ForkFilesProblem): a plain file name with an
+    extension, not one the pack's other files use."""
+    return (isinstance(name, str) and len(name) <= 64 and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+", name) is not None
+            and not re.fullmatch(r"(?i)con|prn|aux|nul|com\d|lpt\d", name.split(".")[0]) and name.lower() not in TAKEN
+            and not name.lower().endswith(".part"))
+
+
+def fork_files():
+    """1.2.0: the fork's renderer files, sorted: every file in its StreamingAssets\\Softbody folder (what runs here). Exits
+    on a name the manager would refuse."""
+    if not os.path.isdir(FORK_FILES):
+        return []
+    names, skipped = [], []
+    for name in sorted(os.listdir(FORK_FILES), key=str.lower):
+        (names if os.path.isfile(os.path.join(FORK_FILES, name)) else skipped).append(name)
+    if skipped:
+        print(f"warning: folders in {FORK_FILES} are not packed: {', '.join(skipped)}")
+    bad = [n for n in names if not usable_name(n)]
+    if bad:
+        sys.exit(f"the fork's renderer files need plain names with an extension (and not the pack's own file names): {', '.join(bad)}")
+    if len(names) > 16:
+        sys.exit(f"the fork has {len(names)} renderer files in {FORK_FILES}: the manager takes at most 16")
+    for name in names:
+        built = os.path.join(SHADERS, name)
+        if os.path.exists(built) and sha(built) != sha(os.path.join(FORK_FILES, name)):
+            print(f"warning: the fork's {name} is not the one in Softbody\\GpuFluid\\Shaders (built again since?): packing the fork's, "
+                  "the one you run. make_softbody_renderer.py puts the new one in the fork.")
+    return names
+
+
+def gi_enabled(path):
+    """GI (2026-11-15): whether a gi.ini switches the bounce light on (its "enabled = N" line, N not 0)."""
+    m = GI_LINE.search(open(path, "rb").read())
+    return m is not None and m.group(2) != b"0"
+
+
+def switch_gi_off(path):
+    """GI (2026-11-15): the pack's own copy of gi.ini says enabled = 0, the rest of it unchanged."""
+    data = open(path, "rb").read()
+    new, n = GI_LINE.subn(lambda m: m.group(1) + b"0", data)
+    if n != 1:
+        sys.exit(f"{path} has {n} \"enabled = ...\" lines (one expected): not packing it")
+    open(path, "wb").write(new)
+    if gi_enabled(path):
+        sys.exit(f"could not switch the GI off in {path}")
+
+
+GI_LINE = re.compile(rb"(?m)^([ \t]*enabled[ \t]*=[ \t]*)([^\s#]+)")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Makes a friend pack (and, with updates set up, a GitHub release's files).")
     ap.add_argument("--notes", default="", help="what is new, a line or two (shown in friends' managers)")
     ap.add_argument("--tag", help="the release's tag (default: v<version>); a tag is published once")
     ap.add_argument("--out", default=OUT, help="where the pack and the release go (default: exports)")
     ap.add_argument("--force", action="store_true", help="pack the build even when it is not the installed version")
+    gi = ap.add_mutually_exclusive_group()
+    gi.add_argument("--gi-off", action="store_true", help="the fork is the GI build: friends get it switched off (enabled = 0)")
+    gi.add_argument("--gi-as-is", action="store_true", help="the fork is the GI build: friends get the gi.ini this PC runs")
     args = ap.parse_args()
     out = os.path.abspath(args.out)
 
@@ -179,6 +248,16 @@ def main():
     chash = compatibility_hash(version)
     if not chash:
         print(f"warning: no compatibility hash for {version} in the install log; the manifest leaves it out")
+    extras = fork_files()   # 1.2.0: the renderer files (0.27.0: the smoke shader)
+    if extras:
+        print(f"renderer files from the fork: {', '.join(extras)}")
+    if "gi.ini" in extras:
+        on = gi_enabled(os.path.join(FORK_FILES, "gi.ini"))
+        if not (args.gi_off or args.gi_as_is):
+            sys.exit("the fork is the GI build (its gi.ini switches the bounce light " + ("on" if on else "off") + "): say how friends get it, "
+                     "--gi-off (their gi.ini says enabled = 0) or --gi-as-is (the gi.ini this PC runs)")
+        print("GI: friends get it " + ("switched off (enabled = 0 in their gi.ini; this PC's own is not touched)" if args.gi_off
+                                       else "as this PC runs it (" + ("on" if on else "off") + ")"))
 
     updates = update_source()
     tag = args.tag or f"v{version}"
@@ -214,6 +293,10 @@ def main():
         shutil.copy2(exe, os.path.join(pack, "SoftbodyManager.exe"))
         shutil.copy2(dll, os.path.join(payload, "Softbody.dll"))
         shutil.copy2(FORK_DLL, os.path.join(payload, "Renderite.Unity.dll"))
+        for extra in extras:
+            shutil.copy2(os.path.join(FORK_FILES, extra), os.path.join(payload, extra))
+        if args.gi_off and "gi.ini" in extras:
+            switch_gi_off(os.path.join(payload, "gi.ini"))
         shutil.copy2(LICENSE, os.path.join(pack, "LICENSE-Renderite.txt"))
         shutil.copy2(os.path.join(HERE, "FRIEND-README.txt"), os.path.join(pack, "README.txt"))
         manifest = {
@@ -224,6 +307,8 @@ def main():
             "RendererDllSha256": sha(FORK_DLL),
             "Made": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
+        if extras:
+            manifest["ForkFiles"] = [{"Name": name, "Sha256": sha(os.path.join(payload, name))} for name in extras]
         if updates:
             manifest.update({
                 "Tag": tag,
@@ -249,7 +334,7 @@ def main():
                 print(r.stdout[-3000:], r.stderr[-2000:])
                 sys.exit("signing the manifest failed")
             for src, dst in [(os.path.join(payload, "Softbody.dll"), "Softbody.dll"), (os.path.join(payload, "Renderite.Unity.dll"), "Renderite.Unity.dll"),
-                             (exe, "SoftbodyManager.exe")]:
+                             (exe, "SoftbodyManager.exe")] + [(os.path.join(payload, name), name) for name in extras]:
                 shutil.copy2(src, os.path.join(release, dst))
 
     zpath = os.path.join(out, name + ".zip")
@@ -261,7 +346,8 @@ def main():
                 full = os.path.join(root, fn)
                 z.write(full, os.path.join(name, os.path.relpath(full, pack)))
     mb = os.path.getsize(zpath) / 1048576
-    print(f"made {zpath} ({mb:.0f} MB): Softbody {version}, hash {chash or '?'}, for Resonite renderer {official[:10]}")
+    print(f"made {zpath} ({mb:.0f} MB): Softbody {version}, hash {chash or '?'}, for Resonite renderer {official[:10]}" +
+          (f", with {', '.join(extras)}" if extras else ""))
     if release:
         shutil.copy2(zpath, os.path.join(release, name + ".zip"))
         print(f"made {release}: the release {tag} for github.com/{updates[0]} (publish it with: python publish_release.py {tag} "

@@ -494,6 +494,14 @@ Lenki's decisions so far:
   - **0.27.0: smoke swirls, foam and thick liquid** (the three SoftbodyRnD prototypes Lenki picked): see the section below.
     New synced fields, so a new hash (`0/uDXxcV+UVEn6+RnAsMVg==`); channel version 8. Its flesh code includes 0.26.6's fix
     (skin points flying after sudden moves and hits), which ships first, on its own, from a copy without the fluid changes.
+  - **0.29.2 (fork): the thick liquid at any particle size.** Its viscosity now grows with the particle size, so the same
+    Viscosity looks about as thick at any size. Renderer fork only; the plugin and the hash are unchanged. See the section at
+    the end.
+  - **Thick grip and Viscosity 20 (fork, 2026-11-14).** A thick liquid grips the shapes it touches (it slid along them), it
+    takes Viscosity up to 20 (was 15), and its viscosity grows as the particle size to the power 1.5 (was 1). Renderer fork,
+    plus one constant shared with the plugin (`FluidChannel.ThickViscosityCap`, only for its Status text), which comes with
+    the plugin's next build; the hash is unchanged. See the section at the end. Installed 2026-11-14 20:20
+    (Renderite.Unity.dll 42c4eb7c..., the GI build with GI test 3), not yet run in game.
 
 ## 0.27.0: smoke swirls, foam and thick liquid
 
@@ -613,3 +621,209 @@ and the tile loop in `GasUpdate`):
 - Shedding only from users' hands, so a moving prop doesn't fill the vortex slots.
 - Checking in game where foam sorts against the water's refraction.
 - Temperature and melting: a ν per particle (the harmonic mean already handles neighbours with different ν).
+
+## 0.29.2 (fork): the thick liquid at any particle size
+
+Lenki tried 0.29.0 in a world with 7.5 cm particles, and ThickLiquid "didn't do much". Lenki then picked this fix (option 2
+of the 0.29.0 log check): the same Viscosity should look equally thick at any particle size.
+
+**Why it didn't do much:**
+- 0.27.0 gave a thick liquid the same kinematic viscosity ν at every particle size. That is right for one scene at a coarser
+  resolution. But a world built for bigger particles has bigger flows, and a viscous flow only looks the same at a bigger scale
+  when ν grows with it (Froude and Reynolds similarity: ν ∝ L^1.5).
+- XSPH, used with ThickLiquid off, grows with the particle size on its own. Each pass averages over the kernel, so its
+  effective ν goes as h²/dt.
+- So at 7.5 cm, turning ThickLiquid on made the liquid runnier at every Viscosity up to 15. In the scaled dam break below, at
+  t√3 = 0.5, 1 and 2 s:
+  - Viscosity 15 off (XSPH): front 0.470, 0.599, 0.753;
+  - Viscosity 15 on: 0.509, 0.646, 0.794.
+  - At 10 it was worse: 0.500 off against 0.736 on at 0.5 s.
+
+**The change** (renderer fork only: `GpuFluidSim.ThickViscosity`, `GpuFluidDirector.LiquidOf`; the plugin, the channel and the
+hash are unchanged):
+- ν = KinematicViscosity(min(V, 15)) × (particle size / 2.5 cm). That is `ThickSizePower` = 1: twice the particle size, twice
+  the viscosity.
+- At 2.5 cm nothing changes.
+- Viscosity is still held to 15 at every size, so the plugin's Status ("ThickLiquid holds Viscosity to 15") stays right.
+- Cost: the solve's iterations follow ν·dt/h², which now goes as 1/size. Viscosity 15 takes about this many iterations a solve:
+
+  | size | 0.5 cm | 1.25 cm | 2.5 cm | 5 cm | 7.5 cm | 15 cm |
+  |---|---|---|---|---|---|---|
+  | now | 69 | 45 | 32 | 22 | 18 | 13 |
+  | before (0.27.0 to 0.29.1) | 136 (24 of 208 solves stopped at the 150 cap) | 64 | 32 | 16 | 11 | 5 |
+
+**How the power was chosen** (`tests/ThickSizeTests.cs`, modes `thick-size` and `thick-size-fit`, plus `thick-size-fit small`
+for the small sizes; RTX 4070, no game open, 2026-11-13):
+- The test is the 0.27.0 dam break (a 30 × 40 × 30 cm column in a 1.2 × 0.3 m tank), scaled by k = size / 2.5 cm, so every
+  run has the same 2304 particles.
+- It measures the front (the 99th percentile of x, from the left wall) and the height (the 99th percentile of y), both over k,
+  at t√k for t = 0.5, 1, 2 and 4 s.
+- 1.5 (similarity) overshoots. At 7.5 cm, Viscosity 15 reaches 0.400, 0.496 and 0.631, against 0.439, 0.555 and 0.707 at
+  2.5 cm. The solver is not scale-free, and two of its parts already thicken bigger scenes in their own time (t√k):
+  - a thick liquid's speed along a collider falls at 30/s (`VelocityB`), a fixed physical rate;
+  - the pressure-wave damping acts once per substep.
+- The fit used Viscosity 4 to 15 at 5, 7.5 and 15 cm. Error of front and height against 2.5 cm, over k:
+
+  | power | 0 (before) | 0.5 | 0.75 | 0.9 | 1 | 1.1 | 1.25 | 1.5 |
+  |---|---|---|---|---|---|---|---|---|
+  | rms | 72 mm | 37 | 23 | 21 | 23 | 26 | 34 | 53 |
+  | worst | 256 mm | 136 | 102 | 84 | 72 | 84 | 115 | 158 |
+
+  1 has the smallest worst case and is a round number.
+- The best power depends on the Viscosity and the moment:
+  - Viscosity 6 fits best at about 1.2;
+  - Viscosity 13 to 15 at about 0.8;
+  - the late creep (4 s) at about 0.55, since sleeping and the collider drag stop bigger particles a little sooner.
+- At 7.5 cm with power 1 (front, then height, at 0.5, 1, 2 and 4 s; 2.5 cm in brackets):
+  - Viscosity 15: front 0.430, 0.541, 0.686, 0.857 (0.439, 0.555, 0.707, 0.900); height 0.281, 0.223, 0.171, 0.136 (0.274,
+    0.218, 0.161, 0.120);
+  - Viscosity 10: front 0.638, 0.780, 0.910, 1.065 (0.628, 0.790, 0.945, 1.121).
+- Below 2.5 cm:
+  - At 1.25 cm, power 1 stays within 50 mm (Viscosity 10, late) and 30 mm (15).
+  - At 0.5 cm no single power fits: Viscosity 10 wants 0.75 to 1, and 15 is runnier than at 2.5 cm at every power tried
+    (0 to 1.25).
+  - Power 1 keeps every solve converged there; before, Viscosity 15 hit the iteration cap.
+
+**What it does not fix:**
+- **One scene at a coarser particle size now gets thicker than before.** Every liquid already does, since coarse particles damp
+  more. In one dam break (k = 2) run at 2.5, 5 and 7.5 cm with 0.29.1's mapping, Viscosity 15's front at t√2 = 0.5 s was 0.526,
+  0.474 and 0.438. Water's was 1.194, 1.128 and 0.960, with only 640 particles at 7.5 cm. Power 1 adds to that. It fixes the case
+  of a world built for its particle size (Lenki's), not the same scene made coarser.
+- **XSPH still grows with the particle size.** At 7.5 cm in the scaled dam break, XSPH at 15 (0.470, 0.599, 0.753) spreads
+  less than XSPH at 20 does at 2.5 cm (0.537, 0.693, 0.861).
+  - So at 7.5 cm, ThickLiquid on at 15 (0.430, 0.541, 0.686) is now thicker than off, but by less than at 2.5 cm (on 0.439, off
+    0.561 at 0.5 s).
+  - Making XSPH scale-free would change every liquid without ThickLiquid at other sizes, so it was left alone.
+- **The spinning blob** (zero gravity, scaled with the size, 2/√k rad/s) at 7.5 cm:
+  - Viscosity 15 keeps 74 % of its spin at 3√3 s with 0.29.1's mapping, and 82 % with power 1.5 (97 % at 2.5 cm).
+  - The rest is the blob spreading as it spins, which raises its moment of inertia: cohesion is not scale-free either. It is
+    not viscosity.
+
+**Tests:**
+- `thick` (`ThickLiquidTests.cs`, `ThickSizeTests.cs`) adds:
+  - **The mapping** at 0.5 to 50 cm:
+    - 2.5 cm unchanged;
+    - other sizes scaled by size / 2.5 cm;
+    - 20 held to 15 at every size;
+    - a particle size of NaN, 0 or below counts as 2.5 cm.
+  - **The same look at 7.5 cm:** the scaled dam break at Viscosity 10 and 15 against 2.5 cm.
+    - It is stable.
+    - Its front and height stay within 45 mm, over k, in the first 2 s.
+    - Its rms error is at most half of 0.29.1's mapping's.
+    - 0.29.1's mapping ran clearly further, so the test does see the old problem.
+    - It takes no more iterations a solve than at 2.5 cm.
+- The kernels are now compiled once per test run, not once per scene (about 10 s each).
+- **Results** (2026-11-13, 19:00 to 19:20, RTX 4070, no game open):
+  - `thick` passes all 27 checks.
+    - 7.5 cm against 2.5 cm in the first 2 s: Viscosity 10 within 35 mm (rms over 4 s 25 mm; 0.29.1's mapping 127 mm, rms 77);
+      Viscosity 15 within 21 mm (rms 20; 0.29.1's 91 mm, rms 55).
+    - Iterations a solve at 7.5 cm: 5 against 9 at 2.5 cm (Viscosity 10), 18 against 32 (15).
+    - The 2.5 cm results are 0.27.0's: thick 15's front +0.306 m at 4 s (32 iterations), thick 10 +0.527, XSPH 20 +0.465; the
+      blob at 15 keeps 98 % of its spin.
+  - `gpu-fluid` (28 checks; the 97,336-particle splash at 11.2 ms GPU median), `fluid` (23), `fluid-size` (24),
+    `fluid-tension` (4) and `fluid-sleep` (19) pass.
+  - `foam` failed one check once: the pour made a single spray particle, and it was under the liquid's top ("any spray from the
+    pour is mostly above the liquid"). The rerun passed all 21 (4 spray: 3 above, 1 at the top). Water never reaches the
+    changed code, so this is the check's noise on one particle.
+- Renderer fork built: `RenderiteSrc\Renderite.Unity\bin\Release\netstandard2.0\Renderite.Unity.dll`, sha256 ec0a65a0…
+  (the same on a clean rebuild), with the smoke fix in it.
+- **INSTALLED 2026-11-13 19:22** at Lenki's "Yes, install", with Resonite closed. RendererSoftbody was rebuilt with
+  make_softbody_renderer.py: 512 files, and only Renderite.Unity.dll differs from the 18:40 fork. That fork (a5badcba…, the
+  smoke fix, never run) is parked as parked_addons\RendererSoftbody.before-0.29.2-thick. Not yet run in game.
+
+## Thick grip and Viscosity 20 (fork, 2026-11-14)
+
+Lenki: "Its still quite thin on thickliquids mode and such, my friend was aiming for like super thick honey and he still cant
+get it there with the current limitations on the settings." Measured first (`tests -- thick-honey`), then Lenki picked
+"2: Grip and cap 20".
+
+**What held it back** (2.5 cm particles, RTX 4070, no game open):
+- **The walls, mostly.** A thick particle on a collider only got `VelocityB`'s friction (30/s towards standing still), after
+  the viscosity solve. The next solve spread that over the whole liquid as a mild drag, so a thick liquid slid along floors
+  and down slopes like a block on ice. On a 30° ramp, a 20 cm cube at Viscosity 15 slid 1.08 m in 4 s.
+- **Not the cap.** Viscosity 20 (with the cap raised, no grip) slid further still on the ramp (1.20 m): a stiffer block on the
+  same drag. In the dam break it spread less than 15, but still ran past what the no-slip theory gives for 15.
+
+**The change** (renderer fork: `FluidSim.hlsl`, `GpuFluidSim.cs`, `GpuFluidDirector.cs`; plus `FluidChannel.ThickViscosityCap`,
+shared with the plugin):
+- **The grip.** In the implicit viscosity solve, a thick particle touching a collider gets a wall term:
+  (A p)_i += b_i (p_i − n (n · p_i)), with b_i = dt × grip × ν_i / size², and b gains b_i (I − n nᵀ) v_wall. It holds the
+  particle's slide along the shape to the shape's own motion; the normal motion is left alone, so the liquid can still leave
+  the wall. It is implicit, so it is stable at any strength.
+  - `GpuFluidConfig.ThickWallGrip` = 8 (0: off, as 0.29.2). 2, 8 and 32 measured the same: it is already no-slip.
+  - The contact normal comes from `Contact` through a read-only view, `ContactR`: the solve's matrix product already binds
+    8 UAVs, and a ninth failed to load (E_INVALIDARG).
+  - Each row's b_i is kept in the spare z of its preconditioner block (`IvPinv`), so `IvResidual` needs no more buffers.
+- **Moving shapes.** `Collide` now keeps which shape pushed a particle last (`Contact.w` = 1 + its index; everything else only
+  asks w > 0), and a thick liquid grips that shape's velocity. `VelocityB`'s friction on a gripping thick liquid also works
+  against the shape's motion. Water's friction is unchanged (towards standing still).
+- **Viscosity up to 20** (10 m²/s at 2.5 cm), the top of the range: `ThickViscosityCap` 15 → 20. The plugin only uses the
+  constant for its Status text ("ThickLiquid holds Viscosity to …"), which can no longer show, since Viscosity's range ends at
+  20. That text comes with the plugin's next build; a plugin built before it still says "held to 15" above 15.
+- **The size power 1 → 1.5** (`ThickSizePower`). With slippery walls, 0.29.2 fitted 1. No-slip walls are scale-free, so
+  similarity's 1.5 now fits best at every size (below).
+
+**Measured** (`thick-honey`; front from the left wall and height, in m, at 4 s; the ramp's middle, how far down the slope in
+4 s; iterations a solve, median; GPU ms a frame for the 2304-particle dam break):
+
+| | dam front | dam height | ramp | iterations | GPU ms |
+|---|---|---|---|---|---|
+| Viscosity 10, before | 1.121 | 0.104 | 0.653 | 10 | 1.6 |
+| Viscosity 15, before | 0.901 | 0.120 | 1.080 | 33 | 2.8 |
+| Viscosity 20, cap raised, no grip | 0.734 | 0.163 | 1.196 | 98 | 6.9 |
+| Viscosity 10 with the grip | 0.825 | 0.152 | 0.183 | 10 | 1.5 |
+| Viscosity 15 with the grip | 0.574 | 0.230 | 0.138 | 32 | 2.6 |
+| Viscosity 20 with the grip | 0.496 | 0.259 | 0.121 | 60 | 3.9 |
+
+- The no-slip theory for the dam break (Huppert 1982, x_N = 1.411 (g q³ t / 3ν)^(1/5), q = 0.12 m²) gives 0.677 at 15 and
+  0.417 at 20 at 4 s. Before, 15 ran 33 % past it. With the grip it is 15 % under it, as the tank's side walls (no-slip too,
+  not in the 2D theory) slow it.
+- On the ramp the grip leaves a creep of about 3 cm/s, as no-slip film theory gives for a 10 to 13 cm layer
+  (g sin θ H² / 3ν). It still flows: it creeps on between 4 and 8 s.
+- The grip costs nothing, and it steadies the solve near walls: its wall rows are diagonally dominant, so in this small dam
+  break Viscosity 20 takes about 60 iterations a solve instead of 98.
+- **But 20 is expensive in bulk** (`tests -- thick-cost`: a 1.2 × 0.7 × 0.8 m block, 43,008 particles, in a 2.4 m tank, with
+  the grip; GPU median a frame): water 3.87 ms, Viscosity 10 6.15 ms (7 iterations a solve), 15 12.46 ms (32), 20 31.37 ms
+  (107: in a deep pool most rows are far from a wall). Every solve converged. A few thousand particles at 20 cost a few ms.
+- With the grip, Viscosity 10 is about as thick as 15 was, at a third of 15's iterations.
+- A pour (16 L at 4 L/s from 50 cm) ends in a puddle about 0.3 m across and 6 to 8 cm deep in every case, as the theory says
+  for that volume. The grip keeps it a little taller (6.0 against 3.7 cm at 10 s). Real piling, like peanut butter, would need
+  a yield stress, which honey does not have.
+- At 20, a pour's impact can need more than the solve's 150 iterations (117 to 173 solves stopped there in a 14 s pour). The
+  liquid is then a little less thick for those frames; nothing goes unstable.
+
+**The size power, fitted again with the grip** (`tests -- thick-size-grip`, and `small` for 1.25 cm; the 0.29.2 test, the
+dam break scaled with the particle size, against 2.5 cm, at Viscosity 6, 10, 15 and 20; rms over 4 s, then the worst in the
+first 2 s, over k):
+
+| size | power 1 | 1.25 | 1.5 |
+|---|---|---|---|
+| 1.25 cm | 29 mm, 73 | 22, 47 | 19, 42 |
+| 5 cm | 32, 99 | 23, 63 | 17, 31 |
+| 7.5 cm | 52, 163 | 34, 100 | 24, 44 |
+| 15 cm | 71, 176 | 48, 136 | 35, 63 |
+
+- 1.5 fits best everywhere. Viscosity 6 and 10 want 1.5 or a little more, 15 and 20 about 1 to 1.25: at 1.5, 20 is 47 to 105 mm
+  (over k) thicker at 5 to 15 cm than at 2.5 cm.
+- Iterations a solve at 1.5 stay under 2.5 cm's: at 7.5 cm 7 (Viscosity 10), 26 (15) and 54 (20), against 9, 32 and 59.
+- At 7.5 cm, 10 is now within 10 mm in the first 2 s (rms 7) and 15 within 35 mm (rms 26). With power 1 and the grip, 10 was
+  82 mm off.
+
+**Tests** (`thick`, now 38 checks; `ThickHoneyTests.cs`):
+- The mapping: 20 is 10 m²/s (no longer held to 15), past 20 counts as 20, at every size scaled by (size / 2.5 cm)^1.5.
+- The 0.27.0 dam break: 20 spreads less than 15, and every solve converges.
+- The grip:
+  - on the ramp, 15 creeps at most 25 cm in 4 s (0.14), without the grip at least 4 times as far (1.08), 20 no faster than 15,
+    and it creeps on between 4 and 8 s;
+  - the dam break's front at 4 s is within −30 % and +5 % of the no-slip theory, and without the grip over 15 % past it;
+  - 20 is stable, every solve converges, at most 80 iterations a solve (59);
+  - a blob on a platform moving at 0.4 m/s rides along: 5 mm behind its place, at 0.400 m/s. Without the grip the platform
+    slid away under it (20 cm behind within half a second, then off).
+- New measuring modes: `thick-honey` (the table above; `quick` for two cases), `thick-size-grip` (the size fit) and
+  `thick-cost` (the cost in bulk).
+
+**Installed** 2026-11-14 20:20 at Lenki's OK ("Yes, install"), with Resonite closed: `make_softbody_renderer.py --gi --park
+thick-grip`, Renderite.Unity.dll sha256 42c4eb7c..., 542,208 bytes. GI test 3, the smoke bundle (5175349c...) and gi.ini are
+unchanged. The build also carries the cloth's v2 in-place path for skinned meshes (it was in RenderiteSrc, not yet in a built
+fork). The old fork (GI test 3, c421dff2...) is parked as `parked_addons\RendererSoftbody.before-thick-grip`; swap the two
+folders back, with Resonite closed, to undo. Not yet run in game.

@@ -24,3 +24,13 @@ RendererSoftbody/
 **/Temp/
 **/Logs/
 **/UserSettings/
+
+# Unity's manifest bundles (named after their folder), the GI tests' pictures and an old backup
+Softbody/*/Shaders/Shaders
+Softbody/*/Shaders/Shaders.manifest
+Softbody/GpuGI/tests/scene/
+Softbody/GpuGI/backup/
+
+# the shader project's logs and the GI pacing probe's player
+SoftbodyShaders/*.log
+SoftbodyShaders/PacingProbeBuild/

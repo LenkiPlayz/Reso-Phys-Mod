@@ -87,8 +87,9 @@ public class Softbody : Component, IPaintable
     public readonly Sync<int> Iterations;
     /// <summary>Collide with the ground (downward ray) and nearby Box/Sphere colliders.</summary>
     public readonly Sync<bool> Collide;
-    /// <summary>Auto shut-off: if this softbody's average cost per frame on this client goes above this many
-    /// milliseconds, it pauses itself (0.5..50; default 4.5). Change any setting or toggle Enabled to retry.</summary>
+    /// <summary>Auto shut-off: if this softbody's cost per frame on this client, averaged over a minute, goes above this
+    /// many milliseconds (or over 4 times it for 10 s), it pauses itself (0.5..50; default 4.5). 0.29.1: a lag spike no
+    /// longer does. Change any setting or toggle Enabled to retry.</summary>
     public readonly Sync<float> Budget;
 
     // ---- debug views (0.10.0): drawn by each client from its own simulation, on a local slot (never synced or saved).
@@ -137,6 +138,14 @@ public class Softbody : Component, IPaintable
         public readonly Sync<float> Hardness;
         /// <summary>A blur dab: softens the colours under it towards their neighbourhood average (Color is ignored).</summary>
         public readonly Sync<bool> Blur;
+        /// <summary>0.28.0: the dab also paints around MirrorPosition (the brush's Mirror). Each vertex counts its distance to the
+        /// nearer of the two centres, so nothing is painted twice where they overlap.</summary>
+        public readonly Sync<bool> Mirrored;
+        /// <summary>0.28.0: the second centre of a mirrored dab, in the same space as Position.</summary>
+        public readonly Sync<float3> MirrorPosition;
+        /// <summary>0.28.0: 0 paints every material; n paints only the triangles of the renderer's n-th material (1 = the first).
+        /// Dabs saved before 0.28.0 load as 0.</summary>
+        public readonly Sync<int> OnlyMaterial;
     }
     [HideInInspector]
     public readonly SyncList<PaintDab> Paint;
@@ -171,25 +180,10 @@ public class Softbody : Component, IPaintable
     internal int RunningPointCount => _inst?.PointCount ?? 0;
 
     // paint mirror: the synced dabs as Core dabs in the running mesh's colour space, cached per element
+    // (0.28.0: the same converter as SkinnedSoftbody's, instead of a copy of it)
     bool _paintDirty = true;
     float _paintPoll, _paintCooldown;
-    Dab[] _dabBuf = Array.Empty<Dab>();
-    RefID[] _dabIds = Array.Empty<RefID>();   // not PaintDab[]: the weaver treats arrays of sync objects as sync members
-    RawDab[] _dabRaw = Array.Empty<RawDab>();
-    ColorProfile _dabProfile;
-
-    readonly struct RawDab
-    {
-        public readonly float3 Position; public readonly float Radius; public readonly colorX Color; public readonly float Strength, Hardness;
-        public readonly bool Blur;
-        public RawDab(PaintDab d) { Position = d.Position.Value; Radius = d.Radius.Value; Color = d.Color.Value; Strength = d.Strength.Value; Hardness = d.Hardness.Value; Blur = d.Blur.Value; }
-        public bool Same(in RawDab o) =>
-            Blur == o.Blur &&
-            Position.x.Equals(o.Position.x) && Position.y.Equals(o.Position.y) && Position.z.Equals(o.Position.z) && Radius.Equals(o.Radius) &&
-            Strength.Equals(o.Strength) && Hardness.Equals(o.Hardness) && Color.profile == o.Color.profile &&
-            Color.baseColor.r.Equals(o.Color.baseColor.r) && Color.baseColor.g.Equals(o.Color.baseColor.g) &&
-            Color.baseColor.b.Equals(o.Color.baseColor.b) && Color.baseColor.a.Equals(o.Color.baseColor.a);
-    }
+    readonly DabMirror _dabs = new();
 
     string LogName
     {
@@ -438,12 +432,12 @@ public class Softbody : Component, IPaintable
                 Block(_inst.FailReason ?? "stopped");
                 break;
             default:
-                if (_inst.TotalFrames > _inst.Warmup && _inst.EmaTotalMs > BudgetMs)
-                    Block($"paused: over budget ({_inst.EmaTotalMs:0.00} ms per frame on average > {BudgetMs:0.##} ms). " +
-                          "Raise Budget, lower Cells or Iterations, or change any setting (or toggle Enabled) to retry");
-                else if (_inst.TotalFrames > _inst.Warmup && _inst.LastFrameMs > 100)
-                    Block($"paused: a single frame took {_inst.LastFrameMs:0} ms. Change any setting (or toggle Enabled) to retry");
-                else _state = _runningState = _inst.RunningState;
+                // 0.29.1: only a sustained overrun pauses it (BudgetWatch: a minute's average over Budget, or 10 s over 4x);
+                // one long frame or a lag spike no longer does
+                string over = _inst.Watch.Verdict(BudgetMs);
+                if (over != null)
+                    Block($"paused: {over}. Raise Budget, lower Cells or Iterations, or change any setting (or toggle Enabled) to retry");
+                else _state = (_runningState = _inst.RunningState) + _inst.Watch.Note(BudgetMs);
                 if (_inst != null) DebugFrame(dt, running: true);
                 break;
         }
@@ -562,28 +556,7 @@ public class Softbody : Component, IPaintable
 
     /// <summary>The synced dabs (at most <see cref="PaintLayer.MaxDabs"/>) as Core dabs with colours in <paramref name="profile"/>.
     /// Elements whose values did not change since the last call are not converted again.</summary>
-    internal ReadOnlySpan<Dab> ReadDabs(ColorProfile profile)
-    {
-        int n = Math.Min(Paint.Count, PaintLayer.MaxDabs);
-        if (_dabBuf.Length < n)
-        {
-            int cap = Math.Max(n, Math.Min(PaintLayer.MaxDabs, _dabBuf.Length * 2 + 16));
-            Array.Resize(ref _dabBuf, cap); Array.Resize(ref _dabIds, cap); Array.Resize(ref _dabRaw, cap);
-        }
-        if (profile != _dabProfile) { Array.Clear(_dabIds); _dabProfile = profile; }
-        for (int i = 0; i < n; i++)
-        {
-            var e = Paint[i];
-            if (e == null) { _dabIds[i] = default; _dabBuf[i] = new Dab(Vector3.Zero, 1e-6f, Vector4.One, 0f, 1f); continue; }
-            var raw = new RawDab(e);
-            var id = e.ReferenceID;
-            if (_dabIds[i] == id && raw.Same(_dabRaw[i])) continue;
-            _dabIds[i] = id; _dabRaw[i] = raw;
-            var c = raw.Color.ToProfile(profile);
-            _dabBuf[i] = new Dab(new Vector3(raw.Position.x, raw.Position.y, raw.Position.z), raw.Radius, new Vector4(c.r, c.g, c.b, c.a), raw.Strength, raw.Hardness, raw.Blur).Sanitized();
-        }
-        return _dabBuf.AsSpan(0, n);
-    }
+    internal ReadOnlySpan<Dab> ReadDabs(ColorProfile profile) => _dabs.Read(Paint, profile);
 
     /// <summary>The running simulation, for the brush (Gate held). Null when not running on this client.</summary>
     internal SoftbodyInstance PaintTarget => _inst;

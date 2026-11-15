@@ -1,8 +1,8 @@
 # Reso-Phys-Mod
 
-Physics for [Resonite](https://resonite.com): soft bodies, flesh on avatars, a particle liquid and particle smoke. It is a
-Resonite plugin (`Softbody.dll`), a patched copy of Resonite's renderer for the GPU liquid and smoke, and a small manager that
-installs and updates both.
+Physics for [Resonite](https://resonite.com): soft bodies, flesh on avatars, cloth on worlds and avatars, a particle liquid
+and particle smoke, and Pop, a death effect that bursts a model into soft pieces. It is a Resonite plugin (`Softbody.dll`), a
+patched copy of Resonite's renderer for the GPU liquid and smoke, and a small manager that installs and updates both.
 
 **Downloads** are on the [Releases](https://github.com/LenkiPlayz/Reso-Phys-Mod/releases) page. Take the manager
 (`SoftbodyManager.exe`). It installs the plugin and the renderer, switches the plugin off for public sessions, and updates
@@ -14,10 +14,11 @@ Everyone in a session needs the same version: a plugin changes the session's com
 
 | Folder | What it is |
 |---|---|
-| `Softbody/` | The plugin: `Softbody` and `SkinnedSoftbody` (soft meshes and avatar flesh), `SoftbodyBrush` (paint the softness), `FluidEmitter` (liquid, CPU and GPU), `GasEmitter` (smoke, GPU), and the offline tests. Its `README.md` has every version's notes, and the `DESIGN-*.md` files explain how each part works. |
+| `Softbody/` | The plugin: `Softbody` and `SkinnedSoftbody` (soft meshes and avatar flesh), `SoftbodyBrush` (paint the softness), `Cloth` (cloth on worlds and avatars, with `ClothWind`), `ClothBlast` (pushes cloth away, and can free or shred it), `Pop` (the death effect), `FluidEmitter` (liquid, CPU and GPU), `GasEmitter` (smoke, GPU), and the offline tests. Its `README.md` has every version's notes, and the `DESIGN-*.md` files explain how each part works. |
 | `Softbody/GpuFluid/` | The GPU liquid and smoke (Direct3D 11 compute), built into the patched renderer. |
+| `Softbody/GpuGI/` | A test of live bounce light (GI), only in the renderer's GI build. `DESIGN-gi.md` explains it. |
 | `SoftbodyManager/` | The installer and updater (Windows), and the release tools. |
-| `SoftbodyShaders/` | The Unity project that builds the smoke shader. |
+| `SoftbodyShaders/` | The Unity project that builds the smoke shader and the bounce light's voxel shader. |
 | `renderite-patch/`, `make_softbody_renderer.py` | The changes to Resonite's renderer, and the script that builds the patched copy. |
 
 ## Building

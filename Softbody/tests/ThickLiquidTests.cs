@@ -7,7 +7,8 @@ namespace Softbody.Tests;
 
 // 0.27.0: the thick liquid (FluidEmitter.ThickLiquid): an implicit viscosity solve (Weiler et al. 2018) instead of XSPH passes,
 // ported from SoftbodyRnD (its RND-REPORT.md, section 6). A spinning blob keeps its spin; a thick dam break spreads by its real
-// viscosity; Viscosity 20 is held to 15; water with ThickLiquid on runs no solve. "thick" runs these; "fluid-0270-cpu" the mapping.
+// viscosity; Viscosity 20 is held to 15 (thick grip, 2026-11-14: no longer; and it grips the shapes it touches); water with ThickLiquid
+// on runs no solve. "thick" runs these; "fluid-0270-cpu" the mapping.
 static partial class Program
 {
     sealed class ThickScene
@@ -15,7 +16,7 @@ static partial class Program
         public readonly GpuFluidRuntime Rt;
         public readonly List<FluidEmitterRecord> Emitters = new();
         public readonly List<FluidColliderRecord> Colliders = new();
-        public ThickScene(int capacity = 16384) { Rt = new GpuFluidRuntime(GpuDevice(), new GpuFluidConfig { Capacity = capacity, ParticleSize = 0.025f }, FluidHlsl()); }
+        public ThickScene(int capacity = 16384, float particleSize = 0.025f) { Rt = new GpuFluidRuntime(GpuDevice(), new GpuFluidConfig { Capacity = capacity, ParticleSize = particleSize }, FluidHlsl(), ThickKernel); }
         public void Add(IEnumerable<FleshCollider> cs) { foreach (var c in cs) Colliders.Add(Rec(c)); }
         public void Frame(bool finish = false)
         {
@@ -33,6 +34,17 @@ static partial class Program
         public void Dispose() => Rt.Dispose();
     }
 
+    // 0.29.2: each kernel compiled once for all the thick scenes of a run (a scene compiled them all again: about 10 s each)
+    static readonly Dictionary<string, byte[]> _thickKernels = new();
+    static byte[] ThickKernel(string name)
+    {
+        lock (_thickKernels)
+        {
+            if (!_thickKernels.TryGetValue(name, out var code)) _thickKernels[name] = code = HlslCompiler.Compile(FluidHlsl(), name);
+            return code;
+        }
+    }
+
     sealed record ThickCase(string Name, bool Thick, float Viscosity);
 
     static readonly ThickCase[] ThickCases =
@@ -41,7 +53,7 @@ static partial class Program
         new("Viscosity 20, ThickLiquid off (XSPH)", false, 20f),
         new("Viscosity 10, ThickLiquid on", true, 10f),
         new("Viscosity 15, ThickLiquid on", true, 15f),
-        new("Viscosity 20, ThickLiquid on (held to 15)", true, 20f),
+        new("Viscosity 20, ThickLiquid on", true, 20f),
     };
 
     static FluidEmitterRecord ThickRec(FluidEmitterRecord r, bool thick) { r.Thick = thick ? 1 : 0; return r; }
@@ -138,8 +150,12 @@ static partial class Program
             }
             float f15 = front[ThickCases[3].Name], f20 = front[ThickCases[4].Name], fx = front[ThickCases[1].Name], f10 = front[ThickCases[2].Name];
             Check(f15 < fx - 0.05f && f15 < f10, "thick: a Viscosity 15 thick liquid spreads less than XSPH's 20 passes and less than Viscosity 10");
-            Check(MathF.Abs(f20 - f15) < 0.03f, "thick: Viscosity 20 with ThickLiquid on is held to 15 (the same spread)");
+            // (thick grip: 20 is no longer held to 15)
+            Check(f20 < f15 - 0.03f, "thick: Viscosity 20 with ThickLiquid on spreads less than 15 (no longer held to 15)");
         }
+
+        ThickSizeLookTests();
+        ThickGripTests();
 
         // ---- water with ThickLiquid on: no solve, the same motion (two runs with it off give the GPU's run-to-run noise)
         {
@@ -177,7 +193,8 @@ static partial class Program
         }
     }
 
-    /// <summary>The director gives a liquid its kinematic viscosity only with ThickLiquid on and Viscosity over 1, held to 15.</summary>
+    /// <summary>The director gives a liquid its kinematic viscosity only with ThickLiquid on and Viscosity over 1 (held to 15 until the
+    /// thick grip, 2026-11-14; since then up to 20, the top of the range).</summary>
     static void ThickMappingTests()
     {
         float Nu(float viscosity, bool thick, float cohesion = 0.3f)
@@ -189,10 +206,37 @@ static partial class Program
             return d.Liquids[0].D.Y;
         }
         float n10 = Nu(10f, true), n15 = Nu(15f, true), n20 = Nu(20f, true), n4 = Nu(4f, true);
-        Console.WriteLine($"  the mapping (ThickLiquid on): Viscosity 4 -> {n4:0.0000} m²/s, 10 -> {n10:0.000}, 15 -> {n15:0.000}, 20 -> {n20:0.000} (held to 15)");
-        Check(MathF.Abs(n10 - 0.0785f) < 0.002f && MathF.Abs(n15 - 0.886f) < 0.01f && n20 == n15 && n4 > 0.003f && n4 < 0.006f,
-              "thick mapping: 10 is 0.08 m²/s, 15 is 0.9, 20 is held to 15, about 4 is honey (0.004)");
+        Console.WriteLine($"  the mapping (ThickLiquid on): Viscosity 4 -> {n4:0.0000} m²/s, 10 -> {n10:0.000}, 15 -> {n15:0.000}, 20 -> {n20:0.00}, 25 -> {Nu(25f, true):0.00} (the range ends at 20)");
+        Check(MathF.Abs(n10 - 0.0785f) < 0.002f && MathF.Abs(n15 - 0.886f) < 0.01f && MathF.Abs(n20 - 10f) < 0.1f && Nu(25f, true) == n20 && n4 > 0.003f && n4 < 0.006f,
+              "thick mapping: 10 is 0.08 m²/s, 15 is 0.9, 20 is 10 (no longer held to 15), past 20 counts as 20, about 4 is honey (0.004)");
         Check(Nu(20f, false) == 0f && Nu(0.9f, true) == 0f && Nu(1f, true) == 0f, "thick mapping: ThickLiquid off, or Viscosity 1 and under, leaves the liquid on XSPH");
         Check(Nu(0.5f, true, cohesion: 5f) > 0f, "thick mapping: cohesion's thickening (above 1) counts as Viscosity, as with XSPH");
+
+        // 0.29.2 (fork): the same Viscosity looks as thick at any particle size: nu times (size / 2.5 cm)^ThickSizePower
+        float NuAt(float viscosity, float size)
+        {
+            var d = new GpuFluidDirector(16);
+            var r = ThickRec(VolumeRec(1, Vector3.Zero, new Vector3(0.1f), HoneyLike(viscosity)), true);
+            d.Sync(new[] { r }, 1, FluidDt, 1, new GpuFluidStats(), size);
+            return d.Liquids[0].D.Y;
+        }
+        float p = GpuFluidSim.ThickSizePower;
+        var line = new List<string>();
+        bool scaled = true, capped = true;
+        foreach (float s in new[] { 0.005f, 0.0125f, 0.025f, 0.05f, 0.075f, 0.15f, 0.5f })
+        {
+            float f = MathF.Pow(s / 0.025f, p);
+            foreach (float v in new[] { 4f, 10f, 15f, 20f })
+                scaled &= MathF.Abs(NuAt(v, s) - GpuFluidSim.KinematicViscosity(v) * f) <= 1e-5f * GpuFluidSim.KinematicViscosity(v) * f;
+            capped &= NuAt(25f, s) == NuAt(20f, s);
+            line.Add($"{s * 100:0.##} cm x{f:0.###}");
+        }
+        Console.WriteLine($"  the mapping at other particle sizes (power {p}): {string.Join(", ", line)}");
+        Check(NuAt(10f, 0.025f) == GpuFluidSim.KinematicViscosity(10f) && NuAt(15f, 0.025f) == GpuFluidSim.KinematicViscosity(15f),
+              "thick mapping: at 2.5 cm particles nothing changes (the 0.27.0 values)");
+        Check(scaled, $"thick mapping: at other sizes nu is the 2.5 cm value times (size / 2.5 cm)^{p}");
+        Check(capped, "thick mapping: past 20 counts as 20 at every particle size");
+        Check(NuAt(10f, float.NaN) == NuAt(10f, 0.025f) && NuAt(10f, 0f) == NuAt(10f, 0.025f) && NuAt(10f, -1f) == NuAt(10f, 0.025f),
+              "thick mapping: a particle size of NaN, 0 or below counts as 2.5 cm");
     }
 }

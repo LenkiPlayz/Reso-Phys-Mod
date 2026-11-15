@@ -72,7 +72,14 @@ namespace Softbody.FluidGpu
 
         static float C(float v, float lo, float hi, float d) => float.IsNaN(v) || float.IsInfinity(v) ? d : Math.Max(lo, Math.Min(hi, v));
 
-        static GpuLiquid LiquidOf(in FluidEmitterRecord r)
+        /// <summary>0.29.2 (fork): a thick liquid's kinematic viscosity is multiplied by (particle size / 2.5 cm) to this power
+        /// (GpuFluidSim.ThickViscosity; the tests change it to measure other powers).</summary>
+        public float ThickSizePower = GpuFluidSim.ThickSizePower;
+
+        /// <summary>0.27.0 to 0.29.2: held to 15; since the thick grip, to 20 (the top of the range). The tests change it to measure.</summary>
+        public float ThickCap = GpuFluidSim.ThickViscosityCap;
+
+        GpuLiquid LiquidOf(in FluidEmitterRecord r, float spacing)
         {
             var col = new Vector4(C(r.ColR, 0f, 64f, 0.6f), C(r.ColG, 0f, 64f, 0.8f), C(r.ColB, 0f, 64f, 1f), C(r.ColA, 0f, 1f, 0.35f));
             // (0.25.2: cohesion up to 5, thickening the liquid above 1, and adhesion up to 10, as FluidLiquid.Sanitize)
@@ -85,8 +92,9 @@ namespace Softbody.FluidGpu
                 Mask = r.CollideMask,
                 Alive = 1,
                 // 0.27.0: its foam, and a thick liquid's real viscosity (its Viscosity, held to 15, on a log scale; 1 and under: XSPH)
+                // (0.29.2: in proportion to the particle size, so it looks about as thick at any size)
                 D = new Vector4(C(r.Foam, 0f, 10f, 0f),
-                                r.Thick != 0 ? GpuFluidSim.KinematicViscosity(Math.Min(visc, GpuFluidSim.ThickViscosityCap)) : 0f,
+                                r.Thick != 0 ? GpuFluidSim.ThickViscosity(visc, spacing, ThickSizePower, ThickCap) : 0f,
                                 C(r.FoamLifetime, 0.1f, 60f, 3f), 0f),
             };
         }
@@ -135,7 +143,7 @@ namespace Softbody.FluidGpu
                 var rot = new Quaternion(r.RotX, r.RotY, r.RotZ, r.RotW);
                 float ql = rot.Length();
                 rot = ql > 1e-9f && !float.IsNaN(ql) ? Quaternion.Normalize(rot) : Quaternion.Identity;
-                var liquid = LiquidOf(r);
+                var liquid = LiquidOf(r, spacing);
                 if (!_entries.TryGetValue(r.Id, out var en))
                 {
                     en = new Entry { Source = NewSource(liquid), Refills = r.RefillCount, Clears = r.ClearCount };

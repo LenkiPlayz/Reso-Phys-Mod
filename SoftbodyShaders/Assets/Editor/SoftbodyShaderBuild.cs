@@ -3,6 +3,8 @@
 // licensed on this PC). The game's renderer is Unity 2019.4.19f1 with single-pass (double-wide) stereo, so the build turns VR on with
 // single-pass stereo (the shader then gets its UNITY_SINGLE_PASS_STEREO variants, as Resonite's own shaders) and keeps every fog mode.
 // Preview(): renders a frame of smoke dumped by the offline tests (gas-preview) with the shader, to a PNG.
+// 0.29.2: build.ps1 then rewrites the bundle's D3D11 programs for the game's 2019.4.19 (fix_d3d11_programs.py), and Check() draws a
+// test puff with it here (the fork's own SmokeSelfTest).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -134,7 +136,67 @@ public static class SoftbodyShaderBuild
         return tex;
     }
 
+    // ------------------------------------------------------------------ the check (0.29.2)
+
+    /// <summary>build.ps1 -Check (and after each build): loads each bundle named in -softbodyCheck (';' between them) and runs the
+    /// fork's own self-test with its smoke material. That test is Assets/Softbody/SmokeSelfTest.cs, which build.ps1 copies from
+    /// Softbody/GpuFluid/Unity. Logs SOFTBODY_CHECK PASS|FAIL path (what the test saw) for each, then SOFTBODY_CHECK DONE.</summary>
+    public static void Check()
+    {
+        try
+        {
+            string list = Arg("-softbodyCheck") ?? throw new ArgumentException("-softbodyCheck is missing");
+            foreach (var path in list.Split(';').Select(s => s.Trim()).Where(s => s.Length > 0))
+            {
+                AssetBundle bundle = null;
+                try
+                {
+                    bundle = AssetBundle.LoadFromFile(path);
+                    if (bundle == null) { Debug.Log($"SOFTBODY_CHECK FAIL {path} (the bundle did not load)"); continue; }
+                    var smoke = bundle.LoadAllAssets<Material>().FirstOrDefault(m => string.Equals(m.name, "SoftbodySmoke", StringComparison.OrdinalIgnoreCase));
+                    if (smoke == null) { Debug.Log($"SOFTBODY_CHECK FAIL {path} (no SoftbodySmoke material)"); continue; }
+                    bool ok = Softbody.FluidGpu.SmokeSelfTest.Run(smoke, 31, out string result);
+                    Debug.Log($"SOFTBODY_CHECK {(ok ? "PASS" : "FAIL")} {path} ({result})");
+                }
+                finally
+                {
+                    Softbody.FluidGpu.SmokeSelfTest.StopWatching();
+                    if (bundle != null) bundle.Unload(true);
+                }
+            }
+            Debug.Log("SOFTBODY_CHECK DONE");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError("SOFTBODY_CHECK FAILED " + ex);
+            EditorApplication.Exit(1);
+        }
+    }
+
     // ------------------------------------------------------------------ the preview
+
+    /// <summary>Builds the bundle, then renders every frame (*.bin) in -softbodyPreviewDir to a PNG beside it.</summary>
+    public static void BuildAndPreview()
+    {
+        Build();
+        try
+        {
+            string dir = Arg("-softbodyPreviewDir") ?? throw new ArgumentException("-softbodyPreviewDir is missing");
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(SmokeMatPath) ?? throw new InvalidOperationException("no material");
+            int n = 0;
+            foreach (var frame in Directory.GetFiles(dir, "*.bin").OrderBy(f => f))
+            {
+                RenderPreview(frame, Path.ChangeExtension(frame, ".png"), mat, 960, 720);
+                n++;
+            }
+            Debug.Log($"SOFTBODY_PREVIEWS OK {n} frames in {dir}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError("SOFTBODY_PREVIEW FAILED " + ex);
+            EditorApplication.Exit(1);
+        }
+    }
 
     /// <summary>Renders a frame dumped by the offline tests (tests: gas-preview) with the smoke material: a camera where the head
     /// was, the main light the GPU shaded the puffs for, a sky, and a grey floor; to -softbodyPng.</summary>
@@ -146,6 +208,18 @@ public static class SoftbodyShaderBuild
             string png = Arg("-softbodyPng") ?? throw new ArgumentException("-softbodyPng is missing");
             int width = int.Parse(Arg("-softbodyWidth", "960")), height = int.Parse(Arg("-softbodyHeight", "720"));
             var mat = AssetDatabase.LoadAssetAtPath<Material>(Arg("-softbodyMaterial", SmokeMatPath)) ?? throw new InvalidOperationException("no material (build first)");
+            RenderPreview(frame, png, mat, width, height);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError("SOFTBODY_PREVIEW FAILED " + ex);
+            EditorApplication.Exit(1);
+        }
+    }
+
+    static void RenderPreview(string frame, string png, Material mat, int width, int height)
+    {
+        {
             using (var r = new BinaryReader(File.OpenRead(frame)))
             {
                 // header: magic, quads, then head xyz, look-at xyz, light direction xyz (towards the light), light colour rgb, intensity,
@@ -212,11 +286,6 @@ public static class SoftbodyShaderBuild
                 RenderTexture.active = null;
                 Debug.Log($"SOFTBODY_PREVIEW OK {png} ({quads} puffs)");
             }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogError("SOFTBODY_PREVIEW FAILED " + ex);
-            EditorApplication.Exit(1);
         }
     }
 }

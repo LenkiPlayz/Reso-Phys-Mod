@@ -92,6 +92,11 @@ sealed class FleshInstance : IBrushTarget
     readonly bool _invert;
     long _mapPaintVersion = -1, _lastPaintChangeTs;
     bool _colorsDirty;
+    /// <summary>0.29.0: off. The paint used to be written into the mesh's vertex colours and sent with the positions, but the
+    /// SoftbodyRenderer patch updates a skinned mesh in place only for positions, normals and tangents: with colours the
+    /// renderer recreated the mesh, and every SkinnedSoftbody on a mesh with vertex colours stopped at its first upload. The
+    /// mesh now keeps its own colours (the paint still sets the softness). Back on once the renderer takes colours in place.</summary>
+    static readonly bool PaintInColors = false;
     string _mapDescription = "";
 
     /// <summary>0.13.0: one of the separate simulations on this mesh, with its settings, its rig and the work around it.</summary>
@@ -173,6 +178,8 @@ sealed class FleshInstance : IBrushTarget
     public long TotalFrames, TotalUploads, Rebuilds;
     public int Warmup = 60;
     public double EmaMainMs, EmaStepMs, LastFrameMs, LastWaitMs, LastBuildMs;
+    /// <summary>0.29.1: the minute and 10 s averages the Budget pause goes by (see BudgetWatch).</summary>
+    public readonly BudgetWatch Watch = new();
     readonly Window _w = new();
     sealed class Window { public int Frames, Uploads, Idle, Busy; public double MainMs, StepMs, WaitMs, MaxMainMs; public void Clear() { Frames = Uploads = Idle = Busy = 0; MainMs = StepMs = WaitMs = MaxMainMs = 0; } }
 
@@ -269,8 +276,17 @@ sealed class FleshInstance : IBrushTarget
         {
             if (!instancing && (AssetUploads.IsBusy(asset, out _) || AssetUploads.HasPendingRestore(asset))) { reason = "waiting for a previous upload on this mesh"; return Wait; }
             var tris = new List<int>();
+            var triMats = new List<int>(); // 0.28.0: each triangle's material (its submesh's index, as the renderer's Materials)
+            int si = 0;
             foreach (var sub in original.Submeshes)
-                if (sub is TriangleSubmesh ts) tris.AddRange(new ArraySegment<int>(ts.RawIndicies, 0, ts.IndicieCount));
+            {
+                if (sub is TriangleSubmesh ts)
+                {
+                    tris.AddRange(new ArraySegment<int>(ts.RawIndicies, 0, ts.IndicieCount));
+                    for (int k = 0; k < ts.IndicieCount / 3; k++) triMats.Add(si);
+                }
+                si++;
+            }
             if (tris.Count == 0) { reason = "mesh has no triangle submesh"; return Fail; }
             var trisArr = tris.ToArray();
 
@@ -287,7 +303,7 @@ sealed class FleshInstance : IBrushTarget
                 baseCols = fill;
             }
             PaintLayer paint;
-            try { paint = new PaintLayer(pos, baseCols, trisArr); }
+            try { paint = new PaintLayer(pos, baseCols, trisArr, triMats.ToArray()); }
             catch (Exception ex) { reason = "paint layer failed: " + ex.Message; return Fail; }
             var dabs = claimant.ReadDabs(original.Profile);
             if (dabs.Length > 0) paint.Update(dabs);
@@ -301,7 +317,7 @@ sealed class FleshInstance : IBrushTarget
 
             inst = new FleshInstance(renderer, owner, provider, asset, original, work, key, paint, trisArr, skin, heads, tails, source, invert, layers, claimKey);
             // the colours the work copy shows (StartAs and paint may differ from the mesh's own), on a mesh that has colours
-            if (work.HasColors) { paint.Colors.CopyTo(MemoryMarshal.Cast<color, Vector4>(work.RawColors.AsSpan(0, n))); inst._colorsDirty = true; }
+            if (work.HasColors && PaintInColors) { paint.Colors.CopyTo(MemoryMarshal.Cast<color, Vector4>(work.RawColors.AsSpan(0, n))); inst._colorsDirty = true; }
             if (instancing)
             {
                 try { inst.StartPrivate(); }
@@ -342,7 +358,7 @@ sealed class FleshInstance : IBrushTarget
         _swapped = true;
         _ackPending = false;
         _forceUpload = true;
-        _colorsDirty = _work.HasColors;
+        _colorsDirty = _work.HasColors && PaintInColors;
         try { _assetManager?.QueueAssetCreated(Provider); } catch { }
         UploadPath = "own copy of the mesh (instanced), waiting for the first step";
         return true;
@@ -684,6 +700,7 @@ sealed class FleshInstance : IBrushTarget
         {
             EmaMainMs = EmaMainMs <= 0 ? main : EmaMainMs + 0.05 * (main - EmaMainMs);
             EmaStepMs = EmaStepMs <= 0 ? stepMs : EmaStepMs + 0.05 * (stepMs - EmaStepMs);
+            Watch.Add(main);
         }
         return FrameResult.Ok;
     }
@@ -810,7 +827,7 @@ sealed class FleshInstance : IBrushTarget
         var hint = new MeshUploadHint(MeshUploadHint.Flag.Positions | MeshUploadHint.Flag.Normals);
         bool tangents = tan.Length > 0;
         if (tangents) hint[MeshUploadHint.Flag.Tangents] = true;
-        bool colors = _colorsDirty && _work.HasColors;
+        bool colors = _colorsDirty && _work.HasColors && PaintInColors;
         if (colors) hint[MeshUploadHint.Flag.Colors] = true;
         var asset = UploadAsset;
         var why = GpuUpload.Check(asset, _work, hint);
@@ -862,7 +879,7 @@ sealed class FleshInstance : IBrushTarget
         if (r.Kind != PaintLayer.UpdateKind.None)
         {
             _lastPaintChangeTs = Stopwatch.GetTimestamp();
-            if (_work.HasColors && _paint.IsDirty && !_ackPending)
+            if (_work.HasColors && PaintInColors && _paint.IsDirty && !_ackPending)
             {
                 int lo = _paint.DirtyMin, hi = _paint.DirtyMax;
                 _paint.Colors.Slice(lo, hi - lo + 1).CopyTo(MemoryMarshal.Cast<color, Vector4>(_work.RawColors.AsSpan(0, _n)).Slice(lo, hi - lo + 1));
@@ -877,10 +894,10 @@ sealed class FleshInstance : IBrushTarget
     public void FlushPaintColors()
     {
         if (!_paint.IsDirty || _ackPending) return;
-        if (!_work.HasColors)
+        if (!_work.HasColors || !PaintInColors)
         {
             _paint.ClearDirty();
-            SoftbodyRuntime.LogOnce("flesh-nocolors:" + Name, $"'{Name}': this skinned mesh has no vertex colours, so the paint is not shown on it (it still sets the softness)");
+            SoftbodyRuntime.LogOnce("flesh-nocolors:" + Name, $"'{Name}': the paint is not shown as colours on a skinned mesh (it still sets the softness)");
             return;
         }
         int lo = _paint.DirtyMin, hi = _paint.DirtyMax;
@@ -1207,6 +1224,8 @@ sealed class FleshInstance : IBrushTarget
     }
 
     public Vector3 BindPoint(in MeshHit hit) => _paint.HasQueryPose ? _paint.RestPoint(hit) : hit.Point;
+
+    public string MaterialName(int index) => BrushMaterials.Name(Renderer?.Materials, index);
 
     public float BindScale(in MeshHit hit)
     {

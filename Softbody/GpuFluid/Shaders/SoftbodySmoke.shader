@@ -19,12 +19,12 @@ Shader "Softbody/Smoke"
     Properties
     {
         [NoScaleOffset] _NoiseTex ("Wisp noise (3D)", 3D) = "" {}
-        _NoiseAmount ("Wisps", Range(0, 1)) = 0.65
+        _NoiseAmount ("Wisps", Range(0, 1)) = 0.7
         _NoiseScale ("Wisp size", Range(0.2, 3)) = 1
         _NoiseEvolve ("Wisps change over a life", Range(0, 4)) = 1.5
         _Spin ("Turns over a life", Range(0, 1)) = 0.1
         _Edge ("Edge falloff", Range(0.5, 4)) = 1.5
-        _Density ("Opacity", Range(0.2, 4)) = 1.3
+        _Density ("Opacity", Range(0.2, 4)) = 1.5
         _Roundness ("Roundness", Range(0, 1)) = 0.6
         _Wrap ("Light wrap", Range(0, 1)) = 0.5
         _Forward ("Glow against the light", Range(0, 0.95)) = 0.6
@@ -133,11 +133,13 @@ Shader "Softbody/Smoke"
             float2 uv = i.uv.xy;
             float r2 = dot(uv, uv);
             float profile = pow(saturate(1 - r2), _Edge);
-            // two scales of 3D noise; the third axis is its life, so the wisps change as it ages
-            float3 nc = float3(uv * (0.35 * _NoiseScale) + i.uv.z * float2(17.31, 5.13), i.uv.z * 3.7 + i.uv.w * _NoiseEvolve * 0.5);
+            // two scales of 3D noise (the third axis is its life, so the wisps change as it ages) eat into the puff from its edge:
+            // where the noise is low the thin outer parts go, the middle stays
+            float3 nc = float3(uv * (0.6 * _NoiseScale) + i.uv.z * float2(17.31, 5.13), i.uv.z * 3.7 + i.uv.w * _NoiseEvolve * 0.5);
             float4 nz = tex3D(_NoiseTex, nc);
-            float wisp = saturate(nz.r * 0.7 + nz.g * 0.45 - 0.05);
-            dens = profile * lerp(1, wisp * 1.6, _NoiseAmount);
+            float wisp = saturate(nz.r * 0.65 + nz.g * 0.5 - 0.1);
+            float erode = (1 - wisp) * _NoiseAmount;
+            dens = saturate((profile - erode) / max(1 - erode, 0.05));
             alpha = saturate(i.color.a * dens * _Density);
             // (read whether or not this camera has a depth texture: no texture read inside a branch)
             float scene = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_PROJ(_CameraDepthTexture, UNITY_PROJ_COORD(i.projPos)));

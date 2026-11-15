@@ -32,6 +32,10 @@ public class SoftbodyBrush : Tool
     /// <summary>0.13.0: the hue presets: None (white, grey, black: a SkinnedSoftbody's base layer) and the seven ROYGBIV hues
     /// of its hue layers (and of the lattice Softbody's hue bands).</summary>
     public enum PaintHue { None, Red, Orange, Yellow, Green, Blue, Indigo, Violet }
+    /// <summary>0.28.0: the axis of the mesh's own (bind) space the brush mirrors across.</summary>
+    public enum MirrorAxis { Off, X, Y, Z }
+    /// <summary>0.28.0: which material the brush paints: every one, the one each stroke starts on, or ChosenMaterial.</summary>
+    public enum MaterialFilter { Any, StrokeStart, Chosen }
 
     /// <summary>The paint colour. Its hue picks the hue band, its brightness the softness (Value channel: black = firm).</summary>
     public readonly Sync<colorX> Color;
@@ -48,6 +52,15 @@ public class SoftbodyBrush : Tool
     public readonly Sync<BrushMode> Mode;
     /// <summary>Distance between dabs along a stroke, as a fraction of the radius (0.05..2).</summary>
     public readonly Sync<float> Spacing;
+    /// <summary>0.28.0: also paint the mirror image, across the middle of the model on this axis of its own space (X: left and
+    /// right on most avatars). It works on the model's resting shape, so the pose doesn't matter. Off on a model that isn't
+    /// symmetric across that axis (the status says how symmetric it is).</summary>
+    public readonly Sync<MirrorAxis> Mirror;
+    /// <summary>0.28.0: Any paints every material (as before); StrokeStart keeps each stroke on the material it starts on; Chosen
+    /// paints only ChosenMaterial. The brush reaches through the other materials, and erasing leaves their own paint alone.</summary>
+    public readonly Sync<MaterialFilter> OnlyMaterial;
+    /// <summary>0.28.0: the material Chosen paints: the renderer's n-th material (1 = the first).</summary>
+    public readonly Sync<int> ChosenMaterial;
     /// <summary>What the brush is over or did last (local to each client, never synced or saved).</summary>
     public readonly RawOutput<string> Status;
 
@@ -57,6 +70,9 @@ public class SoftbodyBrush : Tool
     protected readonly SyncList<FieldDrive<colorX>> _rimDrives;
     protected readonly FieldDrive<float3> _markerPosition;
     protected readonly FieldDrive<bool> _markerActive;
+    // 0.28.0: a second marker where the mirrored half of a dab lands (brushes made before 0.28.0 have none)
+    protected readonly FieldDrive<float3> _mirrorMarkerPosition;
+    protected readonly FieldDrive<bool> _mirrorMarkerActive;
 
     public const float MaxDistance = 5f;
     public const float MinRadius = 0.005f, MaxRadius = 2f;
@@ -69,6 +85,9 @@ public class SoftbodyBrush : Tool
     readonly List<IPaintable> _targets = new();
     readonly List<Softbody.PaintDab> _lastStroke = new();
     IPaintable _lastStrokeTarget, _hoverTarget, _strokeTarget;
+    int _strokeMaterial = -1;     // 0.28.0: StrokeStart: the material this stroke started on (-1: not yet)
+    IBrushTarget _menuTarget;     // 0.28.0: what the brush was over (or painted last) when its menu opened, for material names
+    ContextMenuItem _materialItem;
     Vector3 _lastDabLocal;
     bool _hasLastDab, _capWarned;
     double _lastLocalUse = double.MinValue;
@@ -93,6 +112,9 @@ public class SoftbodyBrush : Tool
         Hardness.Value = 0.5f;
         Mode.Value = BrushMode.Paint;
         Spacing.Value = 0.3f;
+        Mirror.Value = MirrorAxis.X;
+        OnlyMaterial.Value = MaterialFilter.Any;
+        ChosenMaterial.Value = 1;
     }
 
     protected override void OnAttach()
@@ -147,14 +169,24 @@ public class SoftbodyBrush : Tool
             _markerPosition.Target = marker.Position_Field;
             _markerActive.Target = marker.ActiveSelf_Field;
 
+            // 0.28.0: the mirror marker, the same bubble where the mirrored half of each dab lands
+            var mirrorMarker = Slot.AddSlot("Mirror marker");
+            var (mirrorSphere, mirrorMat) = Bubble(mirrorMarker);
+            _mirrorMarkerPosition.Target = mirrorMarker.Position_Field;
+            _mirrorMarkerActive.Target = mirrorMarker.ActiveSelf_Field;
+
             _radiusDrives.Add().Target = tipSphere.Radius;
             _radiusDrives.Add().Target = markerSphere.Radius;
+            _radiusDrives.Add().Target = mirrorSphere.Radius;
             _fillDrives.Add().Target = tipMat.AlbedoColor;
             _fillDrives.Add().Target = markerMat.AlbedoColor;
+            _fillDrives.Add().Target = mirrorMat.AlbedoColor;
             _rimDrives.Add().Target = tipMat.RimColor;
             _rimDrives.Add().Target = markerMat.RimColor;
+            _rimDrives.Add().Target = mirrorMat.RimColor;
             UpdateVisuals();
             SetMarker(false, default);
+            SetMirrorMarker(false, default);
         }
         catch (Exception ex) { SoftbodyRuntime.Warn("SoftbodyBrush OnAttach: " + ex); }
     }
@@ -315,7 +347,7 @@ public class SoftbodyBrush : Tool
             UpdateVisuals();
             // Update() runs every frame for the user equipping or holding the brush, on their client only;
             // everywhere else (and when let go) the marker is hidden.
-            if (Time.WorldTime - _lastLocalUse > 0.15) { SetMarker(false, default); _hoverTarget = null; SetStatus(IsEquipped ? "equipped" : "idle"); }
+            if (Time.WorldTime - _lastLocalUse > 0.15) { SetMarker(false, default); SetMirrorMarker(false, default); _hoverTarget = null; SetStatus(IsEquipped ? "equipped" : "idle"); }
             FlushStatus();
         }
         catch (Exception ex) { SoftbodyRuntime.Warn("SoftbodyBrush update: " + ex.Message); }
@@ -361,6 +393,16 @@ public class SoftbodyBrush : Tool
         }
     }
 
+    void SetMirrorMarker(bool on, float3 globalPoint)
+    {
+        if (_mirrorMarkerActive.IsLinkValid && _mirrorMarkerActive.Target.Value != on) _mirrorMarkerActive.Target.Value = on;
+        if (on && _mirrorMarkerPosition.IsLinkValid)
+        {
+            var local = Slot.GlobalPointToLocal(in globalPoint);
+            if (_mirrorMarkerPosition.Target.Value != local) _mirrorMarkerPosition.Target.Value = local;
+        }
+    }
+
     void SetStatus(string s) => _status = s;
 
     void FlushStatus()
@@ -383,6 +425,7 @@ public class SoftbodyBrush : Tool
         public float LocalRadius;      // dab radius in the same space as Local
         public float Distance;         // metres along the ray (0 for touch)
         public bool Touch;
+        public int Material;           // 0.28.0: the hit triangle's material (submesh index)
     }
 
     static Vector3 V(in float3 f) => new(f.x, f.y, f.z);
@@ -413,9 +456,9 @@ public class SoftbodyBrush : Tool
         dir = F(Vector3.Normalize(d));
     }
 
-    /// <summary>Where the brush would paint. A tip within the radius of a surface (VR touch) wins over the ray.
-    /// Gate held.</summary>
-    bool FindAim(bool allowTouch, out Aim aim, float3? rayOrigin = null, float3? rayDir = null)
+    /// <summary>Where the brush would paint. A tip within the radius of a surface (VR touch) wins over the ray. 0.28.0: with a
+    /// material (not -1) only that material's triangles count; the others are as if not there. Gate held.</summary>
+    bool FindAim(bool allowTouch, int material, out Aim aim, float3? rayOrigin = null, float3? rayDir = null)
     {
         aim = default;
         float3 o, d;
@@ -436,12 +479,12 @@ public class SoftbodyBrush : Tool
                 float localRadius = worldRadius / scale;
                 var tl = V(anchor.GlobalPointToLocal(in tip));
                 inst.PrepareBrushQuery(tl, tl); // skinned: query the posed mesh (no-op for plain meshes)
-                if (!inst.Paint.ClosestPoint(tl, localRadius, out var h)) continue;
+                if (!inst.Paint.ClosestPoint(tl, localRadius, material, out var h)) continue;
                 float frac = h.T / localRadius;
                 if (frac >= bestTouch) continue;
                 bestTouch = frac; found = true;
                 aim = new Aim { Target = c, Inst = inst, Local = inst.BindPoint(h), Global = anchor.LocalPointToGlobal(F(h.Point)), Hit = h,
-                                LocalRadius = localRadius / inst.BindScale(h), Touch = true };
+                                LocalRadius = localRadius / inst.BindScale(h), Touch = true, Material = inst.Paint.TriangleMaterial(h.Triangle) };
             }
             if (found) return true;
         }
@@ -455,12 +498,12 @@ public class SoftbodyBrush : Tool
             var lo = V(anchor.GlobalPointToLocal(in o));
             var le = V(anchor.GlobalPointToLocal(in end));
             inst.PrepareBrushQuery(lo, le); // skinned: query the posed mesh (no-op for plain meshes)
-            if (!inst.Paint.Raycast(lo, le - lo, 1f, out var h)) continue;
+            if (!inst.Paint.Raycast(lo, le - lo, 1f, material, out var h)) continue;
             float dist = h.T * MaxDistance; // affine maps keep ratios along the line
             if (dist >= bestRay) continue;
             bestRay = dist; found = true;
             aim = new Aim { Target = c, Inst = inst, Local = inst.BindPoint(h), Global = anchor.LocalPointToGlobal(F(h.Point)), Hit = h,
-                            LocalRadius = worldRadius / scale / inst.BindScale(h), Distance = dist };
+                            LocalRadius = worldRadius / scale / inst.BindScale(h), Distance = dist, Material = inst.Paint.TriangleMaterial(h.Triangle) };
         }
         return found;
     }
@@ -473,7 +516,7 @@ public class SoftbodyBrush : Tool
             var d = V(direction);
             if (!(d.LengthSquared() > 1e-12f)) return null;
             lock (SoftbodyRuntime.Gate)
-                return FindAim(false, out var aim, origin, F(Vector3.Normalize(d))) ? aim.Global : null;
+                return FindAim(false, MaterialNow(), out var aim, origin, F(Vector3.Normalize(d))) ? aim.Global : null;
         }
         catch { return null; }
     }
@@ -489,18 +532,27 @@ public class SoftbodyBrush : Tool
             _lastLocalUse = Time.WorldTime;
             lock (SoftbodyRuntime.Gate)
             {
-                if (FindAim(true, out var aim))
+                int material = MaterialNow();
+                if (FindAim(true, material, out var aim))
                 {
                     _hoverTarget = aim.Target;
                     SetMarker(true, aim.Global);
+                    // 0.28.0: the mirror marker, where the mirrored half of a dab here would land
+                    var mirror = MirrorOf(aim, aim.Local, material, out _, out var mirrorGlobal, out var plane);
+                    SetMirrorMarker(mirror == BrushMirror.Placed, mirrorGlobal);
                     if (!_stroking)
-                        SetStatus($"{Mode.Value} on '{SafeName(aim.Target)}' ({(aim.Touch ? "touching" : $"{aim.Distance:0.00} m")}), {aim.Target.PaintDabs.Count} dabs");
+                        SetStatus($"{Mode.Value} on '{SafeName(aim.Target)}' {MaterialName(aim.Inst, aim.Material)} ({(aim.Touch ? "touching" : $"{aim.Distance:0.00} m")}), " +
+                                  $"{aim.Target.PaintDabs.Count} dabs{MirrorNote(mirror, plane)}{MaterialNote(aim.Inst)}");
                 }
                 else
                 {
                     _hoverTarget = null;
                     SetMarker(false, default);
-                    if (!_stroking) SetStatus(_targets.Count == 0 ? "no running Softbody or SkinnedSoftbody in this world" : "not pointing at a Softbody");
+                    SetMirrorMarker(false, default);
+                    if (!_stroking)
+                        SetStatus(_targets.Count == 0 ? "no running Softbody or SkinnedSoftbody in this world"
+                                  : material >= 0 ? $"not pointing at {MaterialName(null, material)} of a Softbody (Material: only that one)"
+                                  : "not pointing at a Softbody");
                 }
             }
         }
@@ -510,6 +562,103 @@ public class SoftbodyBrush : Tool
     static string SafeName(IPaintable c)
     {
         try { return c?.Slot?.Name ?? "?"; } catch { return "?"; }
+    }
+
+    // ------------------------------------------------------------------ 0.28.0: mirror and material
+
+    /// <summary>Below this share of mirrored vertices landing on the surface, the model counts as not symmetric and nothing is mirrored.</summary>
+    public const float MinSymmetry = 0.6f;
+
+    /// <summary>The material the brush is limited to right now (-1: any): Chosen's, or, in a StrokeStart stroke, the one it
+    /// started on. Pick always takes what it points at.</summary>
+    int MaterialNow()
+    {
+        if (Mode.Value == BrushMode.Pick) return -1;
+        return OnlyMaterial.Value switch
+        {
+            MaterialFilter.Chosen => Math.Max(0, ChosenMaterial.Value - 1),
+            MaterialFilter.StrokeStart => _stroking ? _strokeMaterial : -1,
+            _ => -1,
+        };
+    }
+
+    /// <summary>
+    /// Where the mirror image of a dab at this rest-space point lands on the aimed mesh: the mesh's mirror plane on the Mirror
+    /// axis (through its origin, or the middle of its bounds when that is clearly more symmetric; measured once per mesh), the
+    /// point reflected across it and moved onto the nearest surface of the same material within half the dab's radius. Also
+    /// where that is shown (the posed mesh, in the world). Gate held.
+    /// </summary>
+    BrushMirror MirrorOf(in Aim aim, Vector3 local, int material, out Vector3 mirrorLocal, out float3 mirrorGlobal, out MirrorPlane plane)
+    {
+        mirrorLocal = default; mirrorGlobal = default; plane = default;
+        var axis = Mirror.Value;
+        if (axis == MirrorAxis.Off || Mode.Value == BrushMode.Pick || aim.Inst?.Paint == null) return BrushMirror.Off;
+        var paint = aim.Inst.Paint;
+        plane = paint.Mirror((int)axis - 1);
+        if (plane.Score < MinSymmetry) return BrushMirror.NotSymmetric;
+        float maxDist = MathF.Max(0.5f * aim.LocalRadius, 2f * plane.Tolerance);
+        if (!paint.MirrorPoint(local, plane, maxDist, material, out var mh)) return BrushMirror.NoSurface;
+        mirrorLocal = mh.Point;
+        try { mirrorGlobal = aim.Inst.Anchor.LocalPointToGlobal(F(paint.QueryPoint(mh))); } catch { }
+        return BrushMirror.Placed;
+    }
+
+    string MirrorNote(BrushMirror r, in MirrorPlane plane) => r switch
+    {
+        BrushMirror.Placed => $", mirror {Mirror.Value}",
+        BrushMirror.NotSymmetric => $", no mirror: only {plane.Score:P0} symmetric across {Mirror.Value}",
+        BrushMirror.NoSurface => ", mirror: no surface there",
+        _ => "",
+    };
+
+    string MaterialNote(IBrushTarget inst) => OnlyMaterial.Value switch
+    {
+        MaterialFilter.Chosen => ", only " + MaterialName(inst, ChosenMaterial.Value - 1),
+        MaterialFilter.StrokeStart => ", strokes keep to their material",
+        _ => "",
+    };
+
+    static string MaterialName(IBrushTarget inst, int index)
+    {
+        if (index < 0) return "";
+        try { if (inst != null) return inst.MaterialName(index); } catch { }
+        return "#" + (index + 1);
+    }
+
+    /// <summary>The menu's material item: any, where I start, or only the chosen one (named after the mesh the brush was over).</summary>
+    string MaterialLabel() => OnlyMaterial.Value switch
+    {
+        MaterialFilter.StrokeStart => "Material: where I start",
+        MaterialFilter.Chosen => "Material: only " + MaterialName(_menuTarget, Math.Max(0, ChosenMaterial.Value - 1)),
+        _ => "Material: any",
+    };
+
+    /// <summary>The menu's material item cycles any, where I start, then each material of the mesh the brush was over, then any.</summary>
+    [SyncMethod(typeof(Delegate), null)]
+    void OnMaterialCycle(IButton button, ButtonEventData eventData)
+    {
+        try
+        {
+            int count = 1;
+            try { count = Math.Max(1, _menuTarget?.Paint?.MaterialCount ?? Math.Max(1, ChosenMaterial.Value)); } catch { }
+            switch (OnlyMaterial.Value)
+            {
+                case MaterialFilter.Any: OnlyMaterial.Value = MaterialFilter.StrokeStart; break;
+                case MaterialFilter.StrokeStart: ChosenMaterial.Value = 1; OnlyMaterial.Value = MaterialFilter.Chosen; break;
+                default:
+                    if (ChosenMaterial.Value >= 1 && ChosenMaterial.Value < count) ChosenMaterial.Value++;
+                    else OnlyMaterial.Value = MaterialFilter.Any;
+                    break;
+            }
+            if (_materialItem != null && !_materialItem.IsRemoved) _materialItem.LabelText = MaterialLabel();
+            SetStatus(OnlyMaterial.Value switch
+            {
+                MaterialFilter.Chosen => $"paints only {MaterialName(_menuTarget, ChosenMaterial.Value - 1)}; the brush reaches through the others",
+                MaterialFilter.StrokeStart => "each stroke keeps to the material it starts on",
+                _ => "paints every material",
+            });
+        }
+        catch (Exception ex) { SoftbodyRuntime.Warn("SoftbodyBrush material: " + ex.Message); }
     }
 
     // ------------------------------------------------------------------ painting (input callbacks: the using client only)
@@ -524,6 +673,7 @@ public class SoftbodyBrush : Tool
             _stroking = true;
             _hasLastDab = false;
             _strokeTarget = null;
+            _strokeMaterial = -1;
             if (Mode.Value == BrushMode.Paint || Mode.Value == BrushMode.Blur) { _lastStroke.Clear(); _lastStrokeTarget = null; }
             Step(press: true);
         }
@@ -562,13 +712,16 @@ public class SoftbodyBrush : Tool
         _stroking = false;
         _hasLastDab = false;
         _strokeTarget = null;
+        _strokeMaterial = -1;
     }
 
     void Step(bool press)
     {
         lock (SoftbodyRuntime.Gate)
         {
-            if (!FindAim(true, out var aim)) { _hasLastDab = false; return; }
+            if (!FindAim(true, MaterialNow(), out var aim)) { _hasLastDab = false; return; }
+            // 0.28.0: StrokeStart: the stroke keeps to the material its first dab (or erase) lands on
+            if (OnlyMaterial.Value == MaterialFilter.StrokeStart && _strokeMaterial < 0 && Mode.Value != BrushMode.Pick) _strokeMaterial = Math.Max(0, aim.Material);
             if (!ReferenceEquals(aim.Target, _strokeTarget)) { _hasLastDab = false; _strokeTarget = aim.Target; }
             switch (Mode.Value)
             {
@@ -590,28 +743,32 @@ public class SoftbodyBrush : Tool
         var list = aim.Target.PaintDabs;
         float r = aim.LocalRadius;
         float spacing = Math.Clamp(float.IsFinite(Spacing.Value) ? Spacing.Value : 0.3f, 0.05f, 2f) * r;
-        if (!_hasLastDab) { AddDab(list, aim.Target, aim.Local, r); return; }
+        if (!_hasLastDab) { AddDab(list, aim, aim.Local, r); return; }
         float dist = Vector3.Distance(_lastDabLocal, aim.Local);
         if (dist < spacing) return;
-        if (dist > 10f * r) { AddDab(list, aim.Target, aim.Local, r); return; } // a jump, not a stroke: no dabs in between
+        if (dist > 10f * r) { AddDab(list, aim, aim.Local, r); return; } // a jump, not a stroke: no dabs in between
         // fill the stroke between the last dab and here, one dab per spacing
         int steps = Math.Min(MaxDabsPerStep, (int)(dist / spacing));
         var from = _lastDabLocal;
         for (int k = 1; k <= steps; k++)
         {
             var p = k == steps ? aim.Local : Vector3.Lerp(from, aim.Local, k * spacing / dist);
-            if (!AddDab(list, aim.Target, p, r)) break;
+            if (!AddDab(list, aim, p, r)) break;
         }
     }
 
-    bool AddDab(SyncList<Softbody.PaintDab> list, IPaintable target, Vector3 local, float localRadius)
+    bool AddDab(SyncList<Softbody.PaintDab> list, in Aim aim, Vector3 local, float localRadius)
     {
+        var target = aim.Target;
         if (list.Count >= PaintLayer.MaxDabs)
         {
             SetStatus($"'{SafeName(target)}' has the maximum of {PaintLayer.MaxDabs} dabs: erase some (or ClearPaint) to paint more");
             if (!_capWarned) { _capWarned = true; SoftbodyRuntime.Warn($"brush: '{SafeName(target)}' reached {PaintLayer.MaxDabs} paint dabs"); }
             return false;
         }
+        // 0.28.0: the dab's mirror half (one dab with two centres, so the centre line is never painted twice) and its material
+        int material = MaterialNow();
+        var mirror = MirrorOf(aim, local, material, out var mirrorLocal, out _, out var plane);
         var d = list.Add();
         d.Position.Value = F(local);
         d.Radius.Value = localRadius;
@@ -619,27 +776,53 @@ public class SoftbodyBrush : Tool
         d.Strength.Value = Math.Clamp(float.IsFinite(Strength.Value) ? Strength.Value : 0.7f, 0f, 1f);
         d.Hardness.Value = Math.Clamp(float.IsFinite(Hardness.Value) ? Hardness.Value : 0.5f, 0f, 1f);
         d.Blur.Value = Mode.Value == BrushMode.Blur;
+        if (mirror == BrushMirror.Placed) { d.Mirrored.Value = true; d.MirrorPosition.Value = F(mirrorLocal); }
+        if (material >= 0) d.OnlyMaterial.Value = material + 1;
         _lastStroke.Add(d);
         _lastStrokeTarget = target;
         _lastDabLocal = local;
         _hasLastDab = true;
-        SetStatus($"{(Mode.Value == BrushMode.Blur ? "blurring" : "painting")} '{SafeName(target)}': {_lastStroke.Count} dabs this stroke, {list.Count} in all");
+        SetStatus($"{(Mode.Value == BrushMode.Blur ? "blurring" : "painting")} '{SafeName(target)}': {_lastStroke.Count} dabs this stroke, {list.Count} in all" +
+                  $"{MirrorNote(mirror, plane)}{MaterialNote(aim.Inst)}");
         return true;
     }
 
+    /// <summary>Removes the dabs centred within the brush. 0.28.0: with Mirror, also those within the brush's mirror image; a
+    /// mirrored dab with only one of its two centres under the brush keeps the other half (it becomes a plain dab there).
+    /// With a material, dabs limited to another material are left alone (dabs on every material are erased).</summary>
     void Erase(in Aim aim)
     {
         var list = aim.Target.PaintDabs;
         float r2 = aim.LocalRadius * aim.LocalRadius;
-        int removed = 0;
+        int material = MaterialNow();
+        bool hasMirror = MirrorOf(aim, aim.Local, material, out var mirrorLocal, out _, out _) == BrushMirror.Placed;
+        var at = aim.Local;
+        int removed = 0, halved = 0, kept = 0;
         for (int i = list.Count - 1; i >= 0; i--)
         {
             var e = list[i];
             if (e == null) continue;
-            if (Vector3.DistanceSquared(V(e.Position.Value), aim.Local) < r2) { list.RemoveAt(i); removed++; }
+            bool mirrored = e.Mirrored.Value;
+            bool onFirst = Under(V(e.Position.Value), at, hasMirror, mirrorLocal, r2);
+            bool onMirror = mirrored && Under(V(e.MirrorPosition.Value), at, hasMirror, mirrorLocal, r2);
+            if (!onFirst && !onMirror) continue;
+            int only = e.OnlyMaterial.Value - 1;
+            if (material >= 0 && only >= 0 && only != material) { kept++; continue; }
+            if (onFirst && (onMirror || !mirrored)) { list.RemoveAt(i); removed++; }
+            else if (onFirst) { e.Position.Value = e.MirrorPosition.Value; e.Mirrored.Value = false; halved++; }
+            else { e.Mirrored.Value = false; halved++; }
         }
-        if (removed > 0) { _capWarned = false; SetStatus($"erased {removed} dabs on '{SafeName(aim.Target)}', {list.Count} left"); }
+        if (removed + halved > 0)
+        {
+            _capWarned = false;
+            SetStatus($"erased {removed} dabs{(halved > 0 ? $" and {halved} mirrored halves" : "")} on '{SafeName(aim.Target)}', {list.Count} left" +
+                      (kept > 0 ? $" ({kept} of other materials kept)" : ""));
+        }
+        else if (kept > 0) SetStatus($"{kept} dabs here belong to other materials: they stay (Material: {OnlyMaterial.Value})");
     }
+
+    static bool Under(Vector3 p, Vector3 at, bool hasMirror, Vector3 mirrorAt, float r2) =>
+        Vector3.DistanceSquared(p, at) < r2 || (hasMirror && Vector3.DistanceSquared(p, mirrorAt) < r2);
 
     void Pick(in Aim aim)
     {
@@ -751,6 +934,18 @@ public class SoftbodyBrush : Tool
             _softItem = menu.AddItem("Soft", (Uri)null, new colorX?(HueColor(Hue.Value, 1f)), new ButtonEventHandler(OnSoftPreset));
             _halfItem = menu.AddItem("Half", (Uri)null, new colorX?(HueColor(Hue.Value, 0.5f)), new ButtonEventHandler(OnHalfPreset));
             _firmItem = menu.AddItem("Firm (black)", (Uri)null, new colorX?(new colorX(0.25f, 0.25f, 0.25f, 1f)), new ButtonEventHandler(OnFirmPreset));
+            // 0.28.0: mirror (cycles off, X, Y, Z) and material (cycles any, where I start, each material of the mesh, any)
+            var mirrorColor = new colorX(1f, 0.5f, 0.85f, 1f, ColorProfile.sRGB);
+            var axes = new List<OptionDescription<MirrorAxis>>
+            {
+                new OptionDescription<MirrorAxis>(MirrorAxis.Off, "Mirror: off", new colorX?(new colorX(0.6f, 0.6f, 0.6f, 1f, ColorProfile.sRGB)), null, null, null),
+                new OptionDescription<MirrorAxis>(MirrorAxis.X, "Mirror: X", new colorX?(mirrorColor), null, null, null),
+                new OptionDescription<MirrorAxis>(MirrorAxis.Y, "Mirror: Y", new colorX?(mirrorColor), null, null, null),
+                new OptionDescription<MirrorAxis>(MirrorAxis.Z, "Mirror: Z", new colorX?(mirrorColor), null, null, null),
+            };
+            menu.AddEnumShiftItem<MirrorAxis>(Mirror, "Mirror: {0}", (Uri)null, new colorX?(mirrorColor), axes, false);
+            try { _menuTarget = (_hoverTarget ?? _lastStrokeTarget)?.BrushTarget; } catch { _menuTarget = null; }
+            _materialItem = menu.AddItem(MaterialLabel(), (Uri)null, new colorX?(new colorX(1f, 0.85f, 0.3f, 1f, ColorProfile.sRGB)), new ButtonEventHandler(OnMaterialCycle));
             if (_lastStroke.Count > 0 && _lastStrokeTarget != null && !_lastStrokeTarget.IsRemoved)
                 menu.AddItem("Undo last stroke", (Uri)null, new colorX?(colorX.Orange), new ButtonEventHandler(OnUndoStroke));
             if (_hoverTarget != null || _lastStrokeTarget != null)

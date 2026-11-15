@@ -146,6 +146,8 @@ sealed class SoftbodyInstance : IBrushTarget
     public PaintLayer.UpdateResult LastPaintUpdate;
     public int Warmup = 120;
     public double EmaTotalMs, EmaSimMs;
+    /// <summary>0.29.1: the minute and 10 s averages the Budget pause goes by (see BudgetWatch).</summary>
+    public readonly BudgetWatch Watch = new();
     public double LastFrameMs;
     public string UploadPath = "none yet";
     public double LastAckLatencyMs;
@@ -358,9 +360,17 @@ sealed class SoftbodyInstance : IBrushTarget
             if (AssetUploads.IsBusy(asset, out _) || AssetUploads.HasPendingRestore(asset)) { reason = "waiting for a previous upload on this mesh"; return CreateResult.Wait; }
 
             var tris = new List<int>();
+            var triMats = new List<int>(); // 0.28.0: each triangle's material (its submesh's index, as the renderer's Materials)
+            int si = 0;
             foreach (var sub in original.Submeshes)
+            {
                 if (sub is TriangleSubmesh ts)
+                {
                     tris.AddRange(new ArraySegment<int>(ts.RawIndicies, 0, ts.IndicieCount));
+                    for (int k = 0; k < ts.IndicieCount / 3; k++) triMats.Add(si);
+                }
+                si++;
+            }
             if (tris.Count == 0) { reason = "mesh has no triangle submesh"; return CreateResult.Fail; }
 
             // Private deep copy; the original MeshX is kept untouched for the restore.
@@ -382,7 +392,7 @@ sealed class SoftbodyInstance : IBrushTarget
                 Array.Fill(fill, start == Softbody.StartColor.AllFirm ? new Vector4(0f, 0f, 0f, 1f) : Vector4.One);
                 baseCols = fill;
             }
-            try { paint = new PaintLayer(pos, baseCols, trisArr); }
+            try { paint = new PaintLayer(pos, baseCols, trisArr, triMats.ToArray()); }
             catch (Exception ex) { reason = "paint layer failed: " + ex.Message; return CreateResult.Fail; }
             var dabs = claimant.ReadDabs(original.Profile);
             if (dabs.Length > 0) paint.Update(dabs);
@@ -665,12 +675,13 @@ sealed class SoftbodyInstance : IBrushTarget
             if (_paint.IsDirty)
             {
                 bool layout = !_work.HasColors; // first paint on a mesh without vertex colours: the vertex layout grows
-                if (layout && Path == SkinPath.Gpu)
+                if (Path == SkinPath.Gpu)
                 {
                     // 0.9.2: a skinned mesh keeps its layout (a full upload would replace it in the renderer); the paint still
-                    // drives the softness, it just is not shown as colours on this mesh.
+                    // drives the softness, it just is not shown as colours on this mesh. 0.29.0: also on a mesh with vertex
+                    // colours, since the GPU path never uploads colours (see the upload below).
                     _paint.ClearDirty();
-                    SoftbodyRuntime.LogOnce("gpu-nocolors:" + Name, $"'{Name}': this skinned mesh has no vertex colours, so the paint is not shown on it (it still sets the softness)");
+                    SoftbodyRuntime.LogOnce("gpu-nocolors:" + Name, $"'{Name}': the paint is not shown as colours on a skinned mesh (it still sets the softness)");
                     goto paintDone;
                 }
                 if (layout) _work.HasColors = true;
@@ -729,10 +740,12 @@ sealed class SoftbodyInstance : IBrushTarget
                 if (Path == SkinPath.Gpu && !_needFullUpload)
                 {
                     // GPU path: a true partial upload of the moved streams; the asset's buffer keeps its layout, indices and skin
-                    // data. The first one carries the colours too when the copy has them (StartAs / paint may differ from the mesh's).
-                    colors = (!_firstUploadSent || _colorsInWork) && _work.HasColors;
+                    // data. 0.29.0: never the colours (it used to send them once, for StartAs and paint): the SoftbodyRenderer
+                    // patch updates a skinned mesh in place only for positions, normals and tangents, so with colours the
+                    // renderer recreated the mesh and this softbody stopped ("refused"), on any mesh with vertex colours or any
+                    // paint. The mesh keeps its own colours; the paint still sets the softness.
+                    colors = false;
                     hint = new MeshUploadHint(MeshUploadHint.Flag.Positions | MeshUploadHint.Flag.Normals);
-                    if (colors) hint[MeshUploadHint.Flag.Colors] = true;
                     gpuFullReason = GpuUpload.Check(Asset, _work, hint);
                     if (gpuFullReason == null) { gpuPartial = true; full = false; }
                     else
@@ -823,6 +836,7 @@ sealed class SoftbodyInstance : IBrushTarget
         {
             EmaTotalMs = EmaTotalMs <= 0 ? total : EmaTotalMs + 0.05 * (total - EmaTotalMs);
             EmaSimMs = EmaSimMs <= 0 ? simMs : EmaSimMs + 0.05 * (simMs - EmaSimMs);
+            Watch.Add(total);
         }
         LastFrameMs = total;
         return FrameResult.Ok;
@@ -1161,6 +1175,8 @@ sealed class SoftbodyInstance : IBrushTarget
 
     /// <summary>Where a brush hit is on the rest (bind-space) mesh: dabs are stored there. Plain meshes: the hit point itself.</summary>
     public Vector3 BindPoint(in MeshHit hit) => IsSkinned && _paint.HasQueryPose ? _paint.RestPoint(hit) : hit.Point;
+
+    public string MaterialName(int index) => BrushMaterials.Name(Renderer?.Materials, index);
 
     /// <summary>Renderer-local units per bind-space unit at a brush hit (the skinning's scale there; 1 for plain meshes),
     /// so a dab's radius matches the brush's world radius on a scaled or stretched skeleton.</summary>

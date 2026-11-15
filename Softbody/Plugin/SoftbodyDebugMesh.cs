@@ -5,6 +5,7 @@ using Elements.Core;
 using FrooxEngine;
 using Renderite.Shared;
 using Softbody.Core;
+using Softbody.Core.Cloth;
 using Softbody.Core.Flesh;
 
 namespace Softbody;
@@ -13,7 +14,8 @@ namespace Softbody;
 /// The mesh of a Softbody's debug views (0.10.0). The Softbody component creates it on a local slot (never synced,
 /// never saved) when DebugCells or DebugColliders is on, and hands it a snapshot of its simulation a few dozen
 /// times per second; the geometry is built on the engine's background mesh thread, like any procedural mesh.
-/// SkinnedSoftbody (0.11.0) uses it the same way for its tets and colliders. Attached by hand it shows nothing.
+/// SkinnedSoftbody (0.11.0) uses it the same way for its tets and colliders, and Cloth (0.29.0) for its edges and colliders.
+/// Attached by hand it shows nothing.
 /// </summary>
 [Category(new[] { "Physics/Softbody" })]
 public class SoftbodyDebugMesh : ProceduralMesh
@@ -24,6 +26,9 @@ public class SoftbodyDebugMesh : ProceduralMesh
     List<FleshDebugSnapshot> _fleshPending = new(), _fleshBuilding = new();
     int _fleshPendingCount, _fleshBuildingCount;
     bool _hasPending, _flesh, _fleshBuild;
+    // 0.29.0: a cloth's edges
+    ClothDebugSnapshot _clothPending = new(), _clothBuilding = new();
+    bool _cloth, _clothBuild;
     readonly DebugView _view = new();
     readonly DebugGeometry _geometry = new();
     TriangleSubmesh _triangles;
@@ -48,6 +53,7 @@ public class SoftbodyDebugMesh : ProceduralMesh
             _pending.SearchSize = searchSize;
             _hasPending = true;
             _flesh = false;
+            _cloth = false;
         }
         MarkChangeDirty(); // -> OnChanges -> the procedural asset update (coalesced while one is running)
     }
@@ -75,6 +81,22 @@ public class SoftbodyDebugMesh : ProceduralMesh
             _fleshPendingCount = count;
             _hasPending = true;
             _flesh = true;
+            _cloth = false;
+        }
+        MarkChangeDirty();
+    }
+
+    /// <summary>0.29.0, world thread between two cloth steps: copies the cloth's points, edges and (optionally) the
+    /// colliders near it.</summary>
+    internal void SubmitCloth(ClothSolver solver, bool colliders)
+    {
+        if (solver == null) return;
+        lock (_lock)
+        {
+            solver.FillDebug(_clothPending, colliders);
+            _hasPending = true;
+            _flesh = false;
+            _cloth = true;
         }
         MarkChangeDirty();
     }
@@ -89,14 +111,21 @@ public class SoftbodyDebugMesh : ProceduralMesh
         {
             if (_hasPending)
             {
-                if (_flesh) { (_fleshPending, _fleshBuilding) = (_fleshBuilding, _fleshPending); _fleshBuildingCount = _fleshPendingCount; }
+                if (_cloth) (_clothPending, _clothBuilding) = (_clothBuilding, _clothPending);
+                else if (_flesh) { (_fleshPending, _fleshBuilding) = (_fleshBuilding, _fleshPending); _fleshBuildingCount = _fleshPendingCount; }
                 else (_pending, _building) = (_building, _pending);
                 _fleshBuild = _flesh;
+                _clothBuild = _cloth;
                 _hasPending = false;
             }
         }
         DebugCounts counts;
-        try { counts = _fleshBuild ? FleshDebugView.Build(_fleshBuilding, _fleshBuildingCount, _geometry) : _view.Build(_building, _geometry); }
+        try
+        {
+            counts = _clothBuild ? ClothDebugView.Build(_clothBuilding, _geometry)
+                   : _fleshBuild ? FleshDebugView.Build(_fleshBuilding, _fleshBuildingCount, _geometry)
+                   : _view.Build(_building, _geometry);
+        }
         catch { _geometry.Clear(); counts = default; }
 
         bool layout = _triangles == null;

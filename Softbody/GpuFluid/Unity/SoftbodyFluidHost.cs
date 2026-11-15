@@ -156,6 +156,7 @@ namespace Softbody.FluidGpu
 
         static void UpdateInner()
         {
+            if (_smokeMat != null && SmokeSelfTest.Tripped) DropSmoke();   // (0.29.2)
             if (!_started)
             {
                 _started = true;
@@ -533,14 +534,41 @@ namespace Softbody.FluidGpu
                 _smokeMats = new[] { _smokeMat };
                 if (foam != null && foam.shader != null && foam.shader.isSupported) { _foamMat = new Material(foam) { name = "Softbody foam" }; _foamMats = new[] { _foamMat }; }
                 _depthOkId = Shader.PropertyToID("_SoftbodyDepthOK");
+                // 0.29.2: used only once it has drawn a test puff on this renderer. 0.27.0's bundle loaded and Unity called it supported,
+                // but Direct3D refused every program on the game's Unity 2019.4.19. The foam material shares the shader. The renderer's
+                // Temp layer: no other camera draws it. The log watch Run starts goes on after a pass (UpdateInner, DropSmoke).
+                if (!SmokeSelfTest.Run(_smokeMat, LayerMask.NameToLayer(RenderHelper.TEMP_LAYER), out string test))
+                {
+                    SmokeSelfTest.StopWatching();
+                    _smokeMat = null; _foamMat = null; _smokeMats = null; _foamMats = null;
+                    Debug.LogWarning(Tag + "the smoke shader loaded but does not draw on this renderer (" + test + "): the smoke and foam keep the plugin's Unlit material");
+                    return;
+                }
                 Camera.onPreRender += OnCameraPreRender;
-                Debug.Log(Tag + "smoke shader loaded (" + smoke.shader.name + "; foam " + (_foamMat != null ? "too" : "keeps the Unlit material") + ")");
+                Debug.Log(Tag + "smoke shader loaded (" + smoke.shader.name + "; foam " + (_foamMat != null ? "too" : "keeps the Unlit material") + "); " + test);
             }
             catch (Exception ex)
             {
+                SmokeSelfTest.StopWatching();
                 Debug.LogWarning(Tag + "the smoke shader failed to load (the smoke keeps the Unlit material): " + ex.Message);
                 _smokeMat = null; _foamMat = null; _smokeMats = null; _foamMats = null;
             }
+        }
+
+        /// <summary>0.29.2: back to the plugin's Unlit discs for the rest of the session. The renderer logged that it could not make one
+        /// of the smoke shader's programs (a variant the self-test did not draw, such as a stereo one). Before 0.29.2 that line came on
+        /// every frame (the "jobified" renderer can't drop the program) and the smoke drew nothing. The renderers switch material, and
+        /// the GPU goes back to discs, with the next frame from the plugin.</summary>
+        static void DropSmoke()
+        {
+            string line = SmokeSelfTest.TrippedBy;
+            SmokeSelfTest.StopWatching();
+            Camera.onPreRender -= OnCameraPreRender;
+            _smokeMat = null; _foamMat = null; _smokeMats = null; _foamMats = null;
+            _gasLastMaterials = null; _foamLastMaterials = null;
+            if (_gasGo != null) _gasGo.SetActive(false);
+            if (_foamGo != null) _foamGo.SetActive(false);
+            Debug.LogWarning(Tag + "the renderer could not make one of the smoke shader's programs (\"" + line + "\"): the smoke and foam go back to the plugin's Unlit material");
         }
 
         /// <summary>Before each camera renders: whether it renders a depth texture, for the smoke's soft edges at surfaces.</summary>

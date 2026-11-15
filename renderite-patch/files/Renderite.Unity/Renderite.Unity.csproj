@@ -46,4 +46,19 @@
     <EmbeddedResource Include="$(SoftbodyGpuFluid)Hlsl\FluidSim.hlsl" LogicalName="Softbody.FluidGpu.FluidSim.hlsl" Link="Softbody\FluidSim.hlsl" />
   </ItemGroup>
 
+  <!-- Softbody fork, GI build only (-c ReleaseGI, into bin\ReleaseGI): the live bounce light, its sources linked from
+       Softbody\GpuGI, and its hooks (#if SOFTBODY_GI). A plain Release build leaves all of it out. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'ReleaseGI'">
+    <Optimize>true</Optimize>
+    <DefineConstants>$(DefineConstants);SOFTBODY_GI</DefineConstants>
+    <SoftbodyGpuGI>$(MSBuildThisFileDirectory)..\..\Softbody\GpuGI\</SoftbodyGpuGI>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(Configuration)' == 'ReleaseGI'">
+    <Compile Include="$(SoftbodyGpuGI)Shared\*.cs" Link="SoftbodyGI\%(Filename)%(Extension)" />
+    <Compile Include="$(SoftbodyGpuGI)D3D\*.cs" Link="SoftbodyGI\%(Filename)%(Extension)" />
+    <Compile Include="$(SoftbodyGpuGI)Unity\*.cs" Link="SoftbodyGI\%(Filename)%(Extension)" />
+    <Compile Include="$(SoftbodyGpuGI)Fork\*.cs" Link="SoftbodyGI\%(Filename)%(Extension)" />
+    <EmbeddedResource Include="$(SoftbodyGpuGI)Hlsl\SoftbodyGI.hlsl" LogicalName="Softbody.GI.SoftbodyGI.hlsl" Link="SoftbodyGI\SoftbodyGI.hlsl" />
+  </ItemGroup>
+
 </Project>

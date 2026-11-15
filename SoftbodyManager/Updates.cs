@@ -285,7 +285,7 @@ static class Updater
             return "lacks the files' checksums";
         if (m.RenderiteCommit == null || !CommitPattern.IsMatch(m.RenderiteCommit)) return "does not say which Resonite renderer it is for";
         if (m.ManagerSha256 != null && !ShaPattern.IsMatch(m.ManagerSha256)) return "has a broken checksum for the manager";
-        return null;
+        return m.ForkFilesProblem();   // 1.2.0: the renderer files (0.27.0: the smoke shader)
     }
 
     static UpdateCheck Failed(string why) => new() { State = UpdateState.Failed, Text = why };
@@ -293,7 +293,8 @@ static class Updater
     /// <summary>
     /// Downloads a release's files: the plugin and the patched renderer DLL into &lt;pack&gt;\payload.new (with the signed manifest)
     /// and, with a <paramref name="managerTarget"/> (the running exe's path + ".new"), the manager. Each file is checked against
-    /// the signed manifest's sha256 before it gets its name; nothing in use is touched. Returns payload.new.
+    /// the signed manifest's sha256 before it gets its name; nothing in use is touched. 1.2.0: the release's renderer files too
+    /// (0.27.0: the smoke shader). Returns payload.new.
     /// </summary>
     public static async Task<string> DownloadAsync(HttpClient http, string releases, UpdateCheck check, string packDir, string managerTarget,
                                                    IProgress<string> progress, CancellationToken ct)
@@ -304,6 +305,8 @@ static class Updater
         Directory.CreateDirectory(dir);
         await Fetch(http, AssetUrl(releases, m.Tag, "Softbody.dll"), Path.Combine(dir, "Softbody.dll"), m.SoftbodySha256, MaxDll, progress, ct);
         await Fetch(http, AssetUrl(releases, m.Tag, "Renderite.Unity.dll"), Path.Combine(dir, "Renderite.Unity.dll"), m.RendererDllSha256, MaxDll, progress, ct);
+        foreach (var f in m.ForkFiles ?? new List<ForkFile>())   // checked by Judge (Problem): plain names, each with a checksum
+            await Fetch(http, AssetUrl(releases, m.Tag, f.Name), Path.Combine(dir, f.Name), f.Sha256, MaxDll, progress, ct);
         if (managerTarget != null)
             await Fetch(http, AssetUrl(releases, m.Tag, ManagerFile), managerTarget, m.ManagerSha256, MaxManager, progress, ct);
         File.WriteAllText(Path.Combine(dir, PackManifest.FileName), check.RemoteText, new UTF8Encoding(false));
@@ -311,11 +314,30 @@ static class Updater
     }
 
     /// <summary>
+    /// 1.2.0: downloads the renderer files the pack's manifest lists but its payload lacks (or has damaged) from the pack's own
+    /// release, each checked against the manifest's sha256 (the manifest is the release's signed one, word for word). That
+    /// happens once: when a manager from before 1.2.0 applied the update (it skips the list) and then swapped in this one.
+    /// Only the pack's folder changes. Returns the names it downloaded.
+    /// </summary>
+    public static async Task<List<string>> FetchPackFilesAsync(HttpClient http, string releases, Paths p, IProgress<string> progress, CancellationToken ct)
+    {
+        var lacking = Manager.PackLacks(p);
+        if (lacking.Count == 0) return lacking;
+        string them = lacking.Count == 1 ? "it" : "them";
+        if (releases == null || p.Pack.Tag == null || !TagPattern.IsMatch(p.Pack.Tag))
+            throw new InvalidOperationException($"the pack lacks {Manager.Describe(lacking)} and has no release to get {them} from: get the pack again from Lenki");
+        foreach (var f in p.Pack.ForkFiles.Where(f => lacking.Contains(f.Name)))
+            await Fetch(http, AssetUrl(releases, p.Pack.Tag, f.Name), p.PackFile(f.Name), f.Sha256, MaxDll, progress, ct);
+        return lacking;
+    }
+
+    /// <summary>
     /// Puts a downloaded release in place (Resonite must be closed): the pack's payload becomes the downloaded one (the old one
     /// is kept as payload.previous), Softbody is installed from it unless that version is in already (and switched off again if
     /// it was off), and the renderer fork, if there is one, gets the new patched DLL (or is made again from the installed
     /// renderer, when Resonite updated since). Returns the pack's new paths and what was done. 1.2.0: the release may be older
-    /// than the pack (back to stable): it goes in the same way.
+    /// than the pack (back to stable): it goes in the same way. The fork's renderer files become the release's too (0.27.0
+    /// brings the smoke shader; going back to a release without it takes it out, into the backups).
     /// </summary>
     public static (Paths paths, List<string> done) Apply(Paths p, string downloaded, Action<string> progress)
     {
@@ -348,7 +370,10 @@ static class Updater
         else if (!File.Exists(Path.Combine(np.Fork, Manager.ForkMarker)))
             done.Add($"The renderer fork at {np.Fork} was not made by the manager: left as it is.");
         else if (File.Exists(forkDll) && Manager.CommitOf(forkDll) == Manager.OfficialCommit(np))
+        {
             done.Add(Manager.UpdateForkDll(np));
+            if (Manager.UpdateForkFiles(np) is { } files) done.Add(files);   // 1.2.0: the smoke shader (0.27.0), and the like
+        }
         else
         {
             progress?.Invoke("Resonite's renderer changed since the fork was made: making the fork again ...");

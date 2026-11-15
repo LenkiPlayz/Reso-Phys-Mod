@@ -112,8 +112,127 @@ static class PluginCheck
         ("SurfaceMs", "FrooxEngine.RawOutput`1<System.Single>"),
     };
 
-    /// <summary>0.27.0: the compatibility hash the engine computes for this version (it changes only with the synced members).</summary>
-    const string ExpectedHash = "0/uDXxcV+UVEn6+RnAsMVg==";
+    /// <summary>0.36.0: the compatibility hash the engine computes for this version (it changes only with the synced members;
+    /// 0.36.0 adds Pop.MaxStrength; 0.35.0 was NFGzc83XbWSzcSAsQyVTfQ==, with Pop.Stiffness and Pop.Adhesion; 0.34.0 was
+    /// LA9nNgL8dW4qhffBF6g70Q==, with the Pop, PopDebris and
+    /// PopDebrisMesh components; 0.33.0 and 0.33.1 were z3JAnL1n9ZsPDsV9CfabPA==, 0.32.0
+    /// KSSeqECB018olW3qrCL/+A==, 0.31.0 b+1olm1+THO/uW80lgRfRw==, 0.30.0
+    /// R3xS7dQ81MFZDCrtFT0Wpw==, 0.29.0 to 0.29.2 yRNQ3JLTOETHk+0whwfqtA==, 0.28.0 MkgpgQd8U0qiTZbXa2oGPw==).</summary>
+    const string ExpectedHash = "ZDD4CvWVbK3FMGZ8lQdbCA==";
+
+    // 0.29.0: the cloth's members, in inspector order
+    static readonly (string Name, string Type)[] ExpectedClothFields =
+    {
+        ("Renderer", "FrooxEngine.SyncRef`1<FrooxEngine.MeshRenderer>"),
+        ("StartAs", "FrooxEngine.Sync`1<Softbody.Cloth/StartPaint>"),
+        ("Anchors", "FrooxEngine.SyncRefList`1<FrooxEngine.Slot>"),
+        ("AnchorRadius", "FrooxEngine.Sync`1<System.Single>"),
+        ("Simulating", "FrooxEngine.Sync`1<System.Single>"),
+        ("WaitForBlast", "FrooxEngine.Sync`1<System.Boolean>"),   // 0.32.0
+        ("Weight", "FrooxEngine.Sync`1<System.Single>"),
+        ("Stretch", "FrooxEngine.Sync`1<System.Single>"),
+        ("Bend", "FrooxEngine.Sync`1<System.Single>"),
+        ("Damping", "FrooxEngine.Sync`1<System.Single>"),
+        ("Drag", "FrooxEngine.Sync`1<System.Single>"),
+        ("Lift", "FrooxEngine.Sync`1<System.Single>"),
+        ("Gravity", "FrooxEngine.Sync`1<System.Single>"),
+        ("Friction", "FrooxEngine.Sync`1<System.Single>"),
+        ("Thickness", "FrooxEngine.Sync`1<System.Single>"),
+        ("StepRate", "FrooxEngine.Sync`1<System.Int32>"),
+        ("MaxDistance", "FrooxEngine.Sync`1<System.Single>"),
+        ("Inertia", "FrooxEngine.Sync`1<System.Single>"),      // 0.30.0
+        ("Backstop", "FrooxEngine.Sync`1<System.Single>"),     // 0.30.0
+        ("Collide", "FrooxEngine.Sync`1<System.Boolean>"),
+        ("CollidePlayers", "FrooxEngine.Sync`1<System.Boolean>"),
+        ("Tearable", "FrooxEngine.Sync`1<System.Boolean>"),
+        ("TearAt", "FrooxEngine.Sync`1<System.Single>"),
+        ("TearSpread", "FrooxEngine.Sync`1<System.Single>"),
+        ("MendTimer", "FrooxEngine.Sync`1<System.Single>"),          // 0.33.0
+        ("DuplicateOnMend", "FrooxEngine.Sync`1<System.Boolean>"),   // 0.33.0
+        ("CopyLifetime", "FrooxEngine.Sync`1<System.Single>"),       // 0.33.0
+        ("Budget", "FrooxEngine.Sync`1<System.Single>"),
+        ("CullDistance", "FrooxEngine.Sync`1<System.Single>"),
+        ("DebugCloth", "FrooxEngine.Sync`1<System.Boolean>"),
+        ("DebugColliders", "FrooxEngine.Sync`1<System.Boolean>"),
+        ("Paint", "FrooxEngine.SyncList`1<Softbody.Softbody/PaintDab>"),
+        ("Tears", "FrooxEngine.SyncFieldList`1<Elements.Core.int2>"),
+        ("Blasts", "FrooxEngine.SyncList`1<Softbody.Cloth/Blast>"),   // 0.31.0
+        ("Status", "FrooxEngine.RawOutput`1<System.String>"),
+        ("Points", "FrooxEngine.RawOutput`1<System.Int32>"),
+        ("Triangles", "FrooxEngine.RawOutput`1<System.Int32>"),
+        ("Torn", "FrooxEngine.RawOutput`1<System.Int32>"),
+        ("StepMs", "FrooxEngine.RawOutput`1<System.Single>"),
+        ("FrameMs", "FrooxEngine.RawOutput`1<System.Single>"),
+        ("Dabs", "FrooxEngine.RawOutput`1<System.Int32>"),
+        ("LastError", "FrooxEngine.RawOutput`1<System.String>"),
+    };
+
+    // 0.29.0: the cloth wind's members
+    static readonly (string Name, string Type)[] ExpectedWindFields =
+    {
+        ("Strength", "FrooxEngine.Sync`1<System.Single>"),
+        ("Gusts", "FrooxEngine.Sync`1<System.Single>"),
+        ("GustRate", "FrooxEngine.Sync`1<System.Single>"),
+        ("Turbulence", "FrooxEngine.Sync`1<System.Single>"),
+        ("SwirlSize", "FrooxEngine.Sync`1<System.Single>"),
+        ("Radius", "FrooxEngine.Sync`1<System.Single>"),
+    };
+
+    // 0.31.0: the cloth blast's members, and a blast as each cloth keeps it
+    static readonly (string Name, string Type)[] ExpectedClothBlastFields =
+    {
+        ("Target", "FrooxEngine.SyncRef`1<Softbody.Cloth>"),   // 0.32.0
+        ("Radius", "FrooxEngine.Sync`1<System.Single>"),
+        ("Strength", "FrooxEngine.Sync`1<System.Single>"),
+        ("Randomness", "FrooxEngine.Sync`1<System.Single>"),
+        ("Release", "FrooxEngine.Sync`1<System.Boolean>"),
+        ("Shred", "FrooxEngine.Sync`1<System.Single>"),
+        ("LastFired", "FrooxEngine.RawOutput`1<System.String>"),
+    };
+
+    // 0.33.0: the copy a Mend leaves behind (local only)
+    static readonly (string Name, string Type)[] ExpectedClothDebrisFields =
+    {
+        ("Status", "FrooxEngine.RawOutput`1<System.String>"),
+    };
+
+    // 0.34.0: Pop (the death effect), in inspector order; the shot record is [HideInInspector]
+    static readonly (string Name, string Type)[] ExpectedPopFields =
+    {
+        ("Target", "FrooxEngine.SyncRef`1<FrooxEngine.Slot>"),
+        ("Shred", "FrooxEngine.Sync`1<System.Single>"),
+        ("MaxPieces", "FrooxEngine.Sync`1<System.Int32>"),
+        ("Strength", "FrooxEngine.Sync`1<System.Single>"),
+        ("MaxStrength", "FrooxEngine.Sync`1<System.Single>"),   // 0.36.0
+        ("Randomness", "FrooxEngine.Sync`1<System.Single>"),
+        ("Drag", "FrooxEngine.Sync`1<System.Single>"),
+        ("Stiffness", "FrooxEngine.Sync`1<System.Single>"),     // 0.35.0
+        ("Adhesion", "FrooxEngine.Sync`1<System.Single>"),      // 0.35.0
+        ("Lifetime", "FrooxEngine.Sync`1<System.Single>"),
+        ("HideTarget", "FrooxEngine.Sync`1<System.Boolean>"),
+        ("Shot", "FrooxEngine.Sync`1<System.Int32>"),
+        ("ShotTime", "FrooxEngine.Sync`1<System.Double>"),
+        ("ShotAt", "FrooxEngine.Sync`1<Elements.Core.float3>"),
+        ("Shown", "FrooxEngine.Sync`1<System.Int32>"),
+        ("LastFired", "FrooxEngine.RawOutput`1<System.String>"),
+    };
+
+    // 0.34.0: a Pop's pieces on one client (local only); its hide drives are protected
+    static readonly (string Name, string Type)[] ExpectedPopDebrisFields =
+    {
+        ("Status", "FrooxEngine.RawOutput`1<System.String>"),
+    };
+
+    static readonly (string Name, string Type)[] ExpectedBlastFields =
+    {
+        ("Id", "FrooxEngine.Sync`1<System.Int32>"),
+        ("Position", "FrooxEngine.Sync`1<Elements.Core.float3>"),
+        ("Radius", "FrooxEngine.Sync`1<System.Single>"),
+        ("Strength", "FrooxEngine.Sync`1<System.Single>"),
+        ("Randomness", "FrooxEngine.Sync`1<System.Single>"),
+        ("Release", "FrooxEngine.Sync`1<System.Boolean>"),
+        ("Shred", "FrooxEngine.Sync`1<System.Single>"),
+    };
 
     // 0.26.0: the gas emitter's members, in inspector order
     static readonly (string Name, string Type)[] ExpectedGasFields =
@@ -197,6 +316,9 @@ static class PluginCheck
         ("Strength", "FrooxEngine.Sync`1<System.Single>"),
         ("Hardness", "FrooxEngine.Sync`1<System.Single>"),
         ("Blur", "FrooxEngine.Sync`1<System.Boolean>"),
+        ("Mirrored", "FrooxEngine.Sync`1<System.Boolean>"),           // 0.28.0
+        ("MirrorPosition", "FrooxEngine.Sync`1<Elements.Core.float3>"), // 0.28.0
+        ("OnlyMaterial", "FrooxEngine.Sync`1<System.Int32>"),           // 0.28.0
     };
 
     // public settings + RawOutput, then the protected visual drives (all sync members, in declaration order)
@@ -209,12 +331,17 @@ static class PluginCheck
         ("Hardness", "FrooxEngine.Sync`1<System.Single>"),
         ("Mode", "FrooxEngine.Sync`1<Softbody.SoftbodyBrush/BrushMode>"),
         ("Spacing", "FrooxEngine.Sync`1<System.Single>"),
+        ("Mirror", "FrooxEngine.Sync`1<Softbody.SoftbodyBrush/MirrorAxis>"),              // 0.28.0
+        ("OnlyMaterial", "FrooxEngine.Sync`1<Softbody.SoftbodyBrush/MaterialFilter>"),    // 0.28.0
+        ("ChosenMaterial", "FrooxEngine.Sync`1<System.Int32>"),                            // 0.28.0
         ("Status", "FrooxEngine.RawOutput`1<System.String>"),
         ("_radiusDrives", "FrooxEngine.SyncList`1<FrooxEngine.FieldDrive`1<System.Single>>"),
         ("_fillDrives", "FrooxEngine.SyncList`1<FrooxEngine.FieldDrive`1<Elements.Core.colorX>>"),
         ("_rimDrives", "FrooxEngine.SyncList`1<FrooxEngine.FieldDrive`1<Elements.Core.colorX>>"),
         ("_markerPosition", "FrooxEngine.FieldDrive`1<Elements.Core.float3>"),
         ("_markerActive", "FrooxEngine.FieldDrive`1<System.Boolean>"),
+        ("_mirrorMarkerPosition", "FrooxEngine.FieldDrive`1<Elements.Core.float3>"),      // 0.28.0
+        ("_mirrorMarkerActive", "FrooxEngine.FieldDrive`1<System.Boolean>"),              // 0.28.0
     };
 
     // FrooxEngine.Tool / ITool members the brush overrides and relies on (see SoftbodyBrush and README)
@@ -257,7 +384,7 @@ static class PluginCheck
         var dma = asm.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "Elements.Data.DataModelAssemblyAttribute");
         check(dma != null && dma.ConstructorArguments.Count == 1 && Convert.ToInt32(dma.ConstructorArguments[0].Value) == 0,
               "[assembly: DataModelAssembly(DataModelAssemblyType.Core)]");
-        check(asm.Name.Name == "Softbody" && asm.Name.Version == new Version(0, 27, 0, 0), "assembly name Softbody, version 0.27.0");
+        check(asm.Name.Name == "Softbody" && asm.Name.Version == new Version(0, 36, 0, 0), "assembly name Softbody, version 0.36.0");
         var refs = module.AssemblyReferences.Select(r => r.Name).ToList();
         Console.WriteLine($"  references: {string.Join(", ", refs)}");
         check(!refs.Any(r => r.Contains("ResoniteModLoader", StringComparison.OrdinalIgnoreCase) || r.Contains("Harmony", StringComparison.OrdinalIgnoreCase)),
@@ -310,7 +437,7 @@ static class PluginCheck
         var dabFields = dab?.Fields.Where(f => !f.IsStatic).Select(f => (f.Name, f.FieldType.FullName)).ToList() ?? new();
         check(dab != null && dab.IsNestedPublic && dab.BaseType?.FullName == "FrooxEngine.SyncObject" && dabFields.SequenceEqual(ExpectedDabFields) &&
               dab.Fields.Where(f => !f.IsStatic).All(f => f.IsInitOnly && f.IsPublic),
-              "nested public class PaintDab : SyncObject { readonly Sync Position (float3), Radius, Color (colorX), Strength, Hardness, Blur }");
+              "nested public class PaintDab : SyncObject { readonly Sync Position (float3), Radius, Color (colorX), Strength, Hardness, Blur; 0.28.0: Mirrored, MirrorPosition (float3), OnlyMaterial (int) }");
 
         // ---- the debug views' mesh (0.10.0)
         var dm = module.GetType("Softbody.SoftbodyDebugMesh");
@@ -339,6 +466,11 @@ static class PluginCheck
         var mode = b.NestedTypes.FirstOrDefault(n => n.Name == "BrushMode");
         var mvals = mode?.Fields.Where(f => f.IsStatic && f.HasConstant).Select(f => $"{f.Name}={f.Constant}").ToArray() ?? Array.Empty<string>();
         check(mode != null && mode.IsEnum && mvals.SequenceEqual(new[] { "Paint=0", "Erase=1", "Pick=2", "Blur=3" }), "nested enum SoftbodyBrush.BrushMode { Paint, Erase, Pick, Blur }");
+        // 0.28.0: mirror axis and material filter (saved by name and value: never reorder)
+        string[] EnumValues(string name) => b.NestedTypes.FirstOrDefault(n => n.Name == name && n.IsEnum)?.Fields.Where(f => f.IsStatic && f.HasConstant)
+                                              .Select(f => $"{f.Name}={f.Constant}").ToArray() ?? Array.Empty<string>();
+        check(EnumValues("MirrorAxis").SequenceEqual(new[] { "Off=0", "X=1", "Y=2", "Z=3" }), "nested enum SoftbodyBrush.MirrorAxis { Off, X, Y, Z }");
+        check(EnumValues("MaterialFilter").SequenceEqual(new[] { "Any=0", "StrokeStart=1", "Chosen=2" }), "nested enum SoftbodyBrush.MaterialFilter { Any, StrokeStart, Chosen }");
 
         // every override must override a virtual of FrooxEngine.Tool (or its bases) with the same signature
         var toolDef = b.BaseType.Resolve();
@@ -422,6 +554,8 @@ static class PluginCheck
             check(geun.Count == 0, "GasEmitter callbacks catch their exceptions" + (geun.Count > 0 ? " - no handler in " + string.Join(", ", geun) : ""));
             check(ge.Methods.Any(m => m.Name == "OnAwake"), "GasEmitter sets its defaults in OnAwake");
         }
+        // 0.29.0: Cloth and ClothWind
+        ClothCecilChecks(check, module);
         // 0.26.2: no override runs an engine callback base that throws by design
         ForbiddenBaseCallChecks(check, module);
         // 0.26.5: a saved layer keeps its hue
@@ -430,7 +564,7 @@ static class PluginCheck
         var chan = new[] { "FluidChannel", "FluidHeader", "FluidBack", "FluidEmitterRecord", "FluidColliderRecord", "GasEmitterRecord", "FluidChannelIO" }.Select(n => module.GetType("Softbody.FluidGpu." + n)).ToList();
         check(chan.All(t => t != null && !t.IsPublic), "the GPU fluid's channel types are in the plugin, all internal");
         // 0.11.3: a SpawnBrush button on both components, and the brush's colour picker menu item
-        foreach (var name in new[] { "Softbody.Softbody", "Softbody.SkinnedSoftbody" })
+        foreach (var name in new[] { "Softbody.Softbody", "Softbody.SkinnedSoftbody", "Softbody.Cloth" })
         {
             var sb = module.GetType(name);
             var mth = sb?.Methods.FirstOrDefault(m => m.Name == "SpawnBrush");
@@ -510,7 +644,7 @@ static class PluginCheck
         var pdCreated = Created(pd);
         Console.WriteLine($"  woven PaintDab: InitializeSyncMembers creates [{string.Join(", ", pdCreated)}]");
         check(pdCreated.SetEquals(ExpectedDabFields.Select(f => f.Name)) && pd.Methods.Any(m => m.Name == "__New" && m.IsStatic),
-              "woven: the PaintDab sync object gets Position/Radius/Color/Strength/Hardness/Blur generated, and __New");
+              "woven: the PaintDab sync object gets Position/Radius/Color/Strength/Hardness/Blur/Mirrored/MirrorPosition/OnlyMaterial generated, and __New");
         var br = asm.MainModule.GetType("Softbody.SoftbodyBrush");
         var brCreated = Created(br);
         Console.WriteLine($"  woven SoftbodyBrush: InitializeSyncMembers creates {brCreated.Count} members [{string.Join(", ", brCreated)}]");
@@ -527,6 +661,34 @@ static class PluginCheck
         var gwCreated = gw != null ? Created(gw) : new HashSet<string>();
         check(gw != null && gwCreated.SetEquals(ExpectedGasFields.Select(f => f.Name)) && gw.Methods.Any(m => m.Name == "__New" && m.IsStatic),
               $"woven: GasEmitter gets all {ExpectedGasFields.Length} of its members generated, and __New");
+        // 0.29.0
+        foreach (var (name, want) in new[] { ("Softbody.Cloth", ExpectedClothFields), ("Softbody.ClothWind", ExpectedWindFields), ("Softbody.ClothBlast", ExpectedClothBlastFields),
+                                             ("Softbody.Pop", ExpectedPopFields) })   // 0.34.0
+        {
+            var cw = asm.MainModule.GetType(name);
+            var cwCreated = cw != null ? Created(cw) : new HashSet<string>();
+            check(cw != null && cwCreated.SetEquals(want.Select(f => f.Name)) && cw.Methods.Any(m => m.Name == "__New" && m.IsStatic),
+                  $"woven: {name} gets all {want.Length} of its members generated, and __New");
+        }
+        // 0.33.0: the copy a Mend leaves behind
+        var wd = asm.MainModule.GetType("Softbody.ClothDebris");
+        var wdCreated = wd != null ? Created(wd) : new HashSet<string>();
+        check(wd != null && wdCreated.SetEquals(ExpectedClothDebrisFields.Select(f => f.Name)) && wd.Methods.Any(m => m.Name == "__New" && m.IsStatic),
+              $"woven: Softbody.ClothDebris gets its {ExpectedClothDebrisFields.Length} member generated, and __New");
+        // 0.34.0: a Pop's pieces on one client (its Status and its protected list of hide drives), and their mesh
+        var pw = asm.MainModule.GetType("Softbody.PopDebris");
+        var pwCreated = pw != null ? Created(pw) : new HashSet<string>();
+        Console.WriteLine($"  woven PopDebris: InitializeSyncMembers creates [{string.Join(", ", pwCreated)}]");
+        check(pw != null && pwCreated.SetEquals(new[] { "Status", "_hidden" }) && pw.Methods.Any(m => m.Name == "__New" && m.IsStatic),
+              "woven: Softbody.PopDebris gets Status and _hidden (its hide drives) generated, and __New");
+        var pmw = asm.MainModule.GetType("Softbody.PopDebrisMesh");
+        check(pmw != null && pmw.Methods.Any(m => m.Name == "__New" && m.IsStatic), "woven: the pop's pieces mesh gets __New (the engine creates components through it)");
+        // 0.31.0: the blast sync object
+        var wb = asm.MainModule.GetType("Softbody.Cloth")?.NestedTypes.FirstOrDefault(n => n.Name == "Blast");
+        var wbCreated = wb != null ? Created(wb) : new HashSet<string>();
+        Console.WriteLine($"  woven Cloth.Blast: InitializeSyncMembers creates [{string.Join(", ", wbCreated)}]");
+        check(wb != null && wbCreated.SetEquals(ExpectedBlastFields.Select(f => f.Name)) && wb.Methods.Any(m => m.Name == "__New" && m.IsStatic),
+              "woven: the Cloth.Blast sync object gets Id/Position/Radius/Strength/Randomness/Release/Shred generated, and __New");
         return copy;
     }
 
@@ -554,10 +716,12 @@ static class PluginCheck
             results.Add((label, count, hash, names));
         }
         var first = results[0];
-        var expectedTypes = new[] { "Softbody.Softbody", "Softbody.Softbody+Channel", "Softbody.Softbody+HueBand", "Softbody.Softbody+PaintDab", "Softbody.Softbody+StartColor", "Softbody.SoftbodyBrush", "Softbody.SoftbodyBrush+BrushMode", "Softbody.SoftbodyBrush+PaintHue", "Softbody.SoftbodyDebugMesh", "Softbody.SkinnedSoftbody", "Softbody.SkinnedSoftbody+HueLayer", "Softbody.SkinnedSoftbody+LayerHue",
-                                    "Softbody.FluidEmitter", "Softbody.FluidEmitter+EmitMode", "Softbody.FluidEmitter+SolverMode", "Softbody.FluidSurfaceMesh", "Softbody.GasEmitter" };
+        var expectedTypes = new[] { "Softbody.Softbody", "Softbody.Softbody+Channel", "Softbody.Softbody+HueBand", "Softbody.Softbody+PaintDab", "Softbody.Softbody+StartColor", "Softbody.SoftbodyBrush", "Softbody.SoftbodyBrush+BrushMode", "Softbody.SoftbodyBrush+PaintHue", "Softbody.SoftbodyBrush+MirrorAxis", "Softbody.SoftbodyBrush+MaterialFilter", "Softbody.SoftbodyDebugMesh", "Softbody.SkinnedSoftbody", "Softbody.SkinnedSoftbody+HueLayer", "Softbody.SkinnedSoftbody+LayerHue",
+                                    "Softbody.FluidEmitter", "Softbody.FluidEmitter+EmitMode", "Softbody.FluidEmitter+SolverMode", "Softbody.FluidSurfaceMesh", "Softbody.GasEmitter",
+                                    "Softbody.Cloth", "Softbody.Cloth+StartPaint", "Softbody.ClothWind", "Softbody.ClothBlast", "Softbody.Cloth+Blast", "Softbody.ClothDebris",
+                                    "Softbody.Pop", "Softbody.PopDebris", "Softbody.PopDebrisMesh" };
         check(first.count == expectedTypes.Length && expectedTypes.All(first.types.Contains),
-              $"the engine registers exactly the four components, their enums, HueBand, PaintDab, HueLayer, the brush and the debug and fluid meshes (Type Count: {expectedTypes.Length})");
+              $"the engine registers exactly the components (Softbody, SkinnedSoftbody, FluidEmitter, GasEmitter, Cloth, ClothWind, ClothBlast, ClothDebris, Pop, PopDebris), their enums, HueBand, PaintDab, HueLayer, the cloth's Blast, the brush and the debug, fluid and pop meshes (Type Count: {expectedTypes.Length})");
         Console.WriteLine($"  compatibility hash 0.11.0: {first.hash} (0.10.x was G9wMj2mxXLdUwCbCdpcpZw==, 0.7.0 to 0.9.3 WoM0oawSj2JVus+1HkcIzQ==, 0.3.0 QFTH7I5BN7vLyNKRjq74pw==)");
         check(first.hash != "QFTH7I5BN7vLyNKRjq74pw==" && first.hash != "WoM0oawSj2JVus+1HkcIzQ==", "the compatibility hash differs from 0.3.0 and 0.7.0-0.9.3");
         check(first.hash != "G9wMj2mxXLdUwCbCdpcpZw==", "0.11.0 adds the SkinnedSoftbody component, so the hash differs from 0.10.x: everyone in a session needs 0.11.0");
@@ -580,7 +744,25 @@ static class PluginCheck
         // (0.26.1 to 0.26.5 added no synced member: they kept 0.26.0's hash, yqJCXkkC/dkxHMi0+m5P3g==, and could share a session)
         Console.WriteLine($"  compatibility hash 0.27.0: {first.hash} (0.26.0 to 0.26.5 were yqJCXkkC/dkxHMi0+m5P3g==)");
         check(first.hash != "yqJCXkkC/dkxHMi0+m5P3g==", "0.27.0 adds FluidEmitter.ThickLiquid, Foam and FoamLifetime and GasEmitter.Vortices: the hash differs from 0.26.0-0.26.5, everyone in a session needs 0.27.0");
-        check(first.hash == ExpectedHash, $"the compatibility hash is 0.27.0's, {ExpectedHash}");
+        Console.WriteLine($"  compatibility hash 0.28.0: {first.hash} (0.27.0 was 0/uDXxcV+UVEn6+RnAsMVg==)");
+        check(first.hash != "0/uDXxcV+UVEn6+RnAsMVg==", "0.28.0 adds the brush's Mirror, OnlyMaterial and ChosenMaterial and the paint dab's Mirrored, MirrorPosition and OnlyMaterial: the hash differs from 0.27.0, everyone in a session needs 0.28.0");
+        Console.WriteLine($"  compatibility hash 0.29.0: {first.hash} (0.28.0 was MkgpgQd8U0qiTZbXa2oGPw==)");
+        check(first.hash != "MkgpgQd8U0qiTZbXa2oGPw==", "0.29.0 adds the Cloth and ClothWind components: the hash differs from 0.28.0, everyone in a session needs 0.29.0");
+        Console.WriteLine($"  compatibility hash 0.30.0: {first.hash} (0.29.0 to 0.29.2 were yRNQ3JLTOETHk+0whwfqtA==)");
+        check(first.hash != "yRNQ3JLTOETHk+0whwfqtA==", "0.30.0 adds Cloth.Inertia and Backstop (avatar cloth): the hash differs from 0.29.x, everyone in a session needs 0.30.0");
+        Console.WriteLine($"  compatibility hash 0.31.0: {first.hash} (0.30.0 was R3xS7dQ81MFZDCrtFT0Wpw==)");
+        check(first.hash != "R3xS7dQ81MFZDCrtFT0Wpw==", "0.31.0 adds the ClothBlast component and Cloth.Blasts: the hash differs from 0.30.0, everyone in a session needs 0.31.0");
+        Console.WriteLine($"  compatibility hash 0.32.0: {first.hash} (0.31.0 was b+1olm1+THO/uW80lgRfRw==)");
+        check(first.hash != "b+1olm1+THO/uW80lgRfRw==", "0.32.0 adds ClothBlast.Target and Cloth.WaitForBlast: the hash differs from 0.31.0, everyone in a session needs 0.32.0");
+        Console.WriteLine($"  compatibility hash 0.33.0: {first.hash} (0.32.0 was KSSeqECB018olW3qrCL/+A==)");
+        check(first.hash != "KSSeqECB018olW3qrCL/+A==", "0.33.0 adds Cloth.MendTimer, DuplicateOnMend and CopyLifetime and the ClothDebris component: the hash differs from 0.32.0, everyone in a session needs 0.33.0");
+        Console.WriteLine($"  compatibility hash 0.34.0: {first.hash} (0.33.0 and 0.33.1 were z3JAnL1n9ZsPDsV9CfabPA==)");
+        check(first.hash != "z3JAnL1n9ZsPDsV9CfabPA==", "0.34.0 adds the Pop, PopDebris and PopDebrisMesh components: the hash differs from 0.33.x, everyone in a session needs 0.34.0");
+        Console.WriteLine($"  compatibility hash 0.35.0: {first.hash} (0.34.0 was LA9nNgL8dW4qhffBF6g70Q==)");
+        check(first.hash != "LA9nNgL8dW4qhffBF6g70Q==", "0.35.0 adds Pop.Stiffness and Pop.Adhesion: the hash differs from 0.34.0, everyone in a session needs 0.35.0");
+        Console.WriteLine($"  compatibility hash 0.36.0: {first.hash} (0.35.0 was NFGzc83XbWSzcSAsQyVTfQ==)");
+        check(first.hash != "NFGzc83XbWSzcSAsQyVTfQ==", "0.36.0 adds Pop.MaxStrength: the hash differs from 0.35.0, everyone in a session needs 0.36.0");
+        check(first.hash == ExpectedHash, $"the compatibility hash is 0.36.0's, {ExpectedHash}");
         check(first.hash != "FngJCj2v4KqIbOI76K4nzQ==",
               "0.13.0 adds the HueLayers list (HueLayer, LayerHue) and the brush's hue presets: the hash differs from 0.12.x, everyone in a session needs 0.13.0");
         check(!string.IsNullOrEmpty(first.hash), "the engine computes a compatibility hash for it");
@@ -631,6 +813,107 @@ static class PluginCheck
     /// logged an error on every focus change and the handler itself never ran (17 times in Lenki's logs since 2026-11-09);
     /// base.OnWorldDestroy came last and threw after it. The forbidden set is read from the installed engine.
     /// </summary>
+    /// <summary>0.29.0: the Cloth and ClothWind components, as the other components are checked.</summary>
+    static void ClothCecilChecks(Action<bool, string> check, ModuleDefinition module)
+    {
+        foreach (var (name, want, guarded, buttons) in new[]
+                 {
+                     ("Softbody.Cloth", ExpectedClothFields, new[] { "OnAttach", "OnStart", "OnChanges", "OnCommonUpdate", "ClearPaint", "SpawnBrush", "Mend" }, new[] { "ClearPaint", "SpawnBrush", "Mend" }),
+                     ("Softbody.ClothWind", ExpectedWindFields, new[] { "OnStart" }, Array.Empty<string>()),
+                     ("Softbody.ClothBlast", ExpectedClothBlastFields, new[] { "Fire", "OnAttach" }, new[] { "Fire" }),   // 0.31.0; 0.32.0 OnAttach
+                     ("Softbody.Pop", ExpectedPopFields, new[] { "Fire", "ShowTarget", "OnAttach", "OnCommonUpdate", "CheckShot", "CheckShown" }, new[] { "Fire", "ShowTarget" }),   // 0.34.0
+                 })
+        {
+            var t = module.GetType(name);
+            check(t != null && t.IsPublic && !t.IsAbstract && t.BaseType?.FullName == "FrooxEngine.Component" && t.Methods.Any(m => m.IsConstructor && !m.IsStatic && m.IsPublic && m.Parameters.Count == 0),
+                  $"public class {name} : FrooxEngine.Component, with a public parameterless constructor");
+            if (t == null) continue;
+            var cat = t.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "FrooxEngine.CategoryAttribute");
+            var paths = cat?.ConstructorArguments[0].Value is CustomAttributeArgument[] arr ? arr.Select(x => (string)x.Value).ToArray() : Array.Empty<string>();
+            check(paths.SequenceEqual(new[] { "Physics" }), $"{name} is under Physics in the component browser");
+            var fields = t.Fields.Where(f => !f.IsStatic && f.IsPublic).Select(f => (Name: f.Name, Type: f.FieldType.FullName)).ToList();
+            bool same = fields.SequenceEqual(want);
+            if (!same) foreach (var e in want.Except(fields).Concat(fields.Except(want))) Console.WriteLine($"    {name} mismatch: {e.Name} {e.Type}");
+            check(same && t.Fields.Where(f => !f.IsStatic && f.IsPublic).All(f => f.IsInitOnly),
+                  $"{name}'s public fields are exactly the {want.Length} expected readonly members, in inspector order");
+            var un = guarded.Where(n => t.Methods.FirstOrDefault(m => m.Name == n) is not { HasBody: true } m || !m.Body.HasExceptionHandlers).ToList();
+            check(un.Count == 0, $"{name} callbacks catch their exceptions" + (un.Count > 0 ? " - no handler in " + string.Join(", ", un) : ""));
+            check(t.Methods.Any(m => m.Name == "OnAwake"), $"{name} sets its defaults in OnAwake");
+            foreach (var b in buttons)
+                check(t.Methods.Any(m => m.Name == b && m.IsPublic && m.Parameters.Count == 0 && m.CustomAttributes.Any(a => a.AttributeType.FullName == "FrooxEngine.SyncMethod")),
+                      $"{name}.{b} is a [SyncMethod] with no arguments (an inspector button)");
+        }
+        var cloth = module.GetType("Softbody.Cloth");
+        var over = cloth?.Methods.Where(m => m.IsVirtual).Select(m => m.Name).ToHashSet() ?? new HashSet<string>();
+        var missing = ExpectedOverrides.Where(o => !over.Contains(o)).ToList();
+        check(missing.Count == 0, "Cloth overrides the same lifecycle callbacks as Softbody" + (missing.Count > 0 ? " (missing " + string.Join(", ", missing) + ")" : ""));
+        var uo = cloth?.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "FrooxEngine.DefaultUpdateOrder");
+        check(uo != null && Convert.ToInt32(uo.ConstructorArguments[0].Value) == 1000, "Cloth is [DefaultUpdateOrder(1000)] (after the slots it hangs from have moved)");
+        // saved by name and value: never reorder
+        var sp = cloth?.NestedTypes.FirstOrDefault(n => n.Name == "StartPaint");
+        var values = sp?.Fields.Where(f => f.IsStatic && f.HasConstant).Select(f => $"{f.Name}={f.Constant}").ToArray() ?? Array.Empty<string>();
+        check(sp != null && sp.IsEnum && values.SequenceEqual(new[] { "AllPinned=0", "AllFree=1", "MeshColors=2" }), "nested enum Cloth.StartPaint { AllPinned, AllFree, MeshColors }");
+        // 0.31.0: the blasts each cloth keeps
+        var bl = cloth?.NestedTypes.FirstOrDefault(n => n.Name == "Blast");
+        var blFields = bl?.Fields.Where(f => !f.IsStatic).Select(f => (f.Name, f.FieldType.FullName)).ToList() ?? new();
+        check(bl != null && bl.IsNestedPublic && bl.BaseType?.FullName == "FrooxEngine.SyncObject" && blFields.SequenceEqual(ExpectedBlastFields) &&
+              bl.Fields.Where(f => !f.IsStatic).All(f => f.IsInitOnly && f.IsPublic),
+              "nested public class Cloth.Blast : SyncObject { readonly Sync Id (int), Position (float3), Radius, Strength, Randomness, Release (bool), Shred }");
+        var blasts = cloth?.Fields.FirstOrDefault(f => f.Name == "Blasts");
+        check(blasts != null && blasts.CustomAttributes.Any(a => a.AttributeType.FullName == "FrooxEngine.HideInInspectorAttribute"),
+              "Cloth.Blasts is [HideInInspector] (like Tears)");
+        // 0.33.0: the copy a Mend leaves behind: made by the plugin on a local slot, under Physics/Softbody like the debug mesh
+        var cd = module.GetType("Softbody.ClothDebris");
+        check(cd != null && cd.IsPublic && !cd.IsAbstract && cd.BaseType?.FullName == "FrooxEngine.Component" && cd.Methods.Any(m => m.IsConstructor && !m.IsStatic && m.IsPublic && m.Parameters.Count == 0),
+              "public class Softbody.ClothDebris : FrooxEngine.Component, with a public parameterless constructor");
+        if (cd != null)
+        {
+            var cdcat = cd.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "FrooxEngine.CategoryAttribute");
+            var cdpaths = cdcat?.ConstructorArguments[0].Value is CustomAttributeArgument[] cdarr ? cdarr.Select(x => (string)x.Value).ToArray() : Array.Empty<string>();
+            check(cdpaths.SequenceEqual(new[] { "Physics/Softbody" }), "ClothDebris is under Physics/Softbody (with the debug mesh: the plugin makes it)");
+            var cdfields = cd.Fields.Where(f => !f.IsStatic && f.IsPublic).Select(f => (Name: f.Name, Type: f.FieldType.FullName)).ToList();
+            check(cdfields.SequenceEqual(ExpectedClothDebrisFields) && cd.Fields.Where(f => !f.IsStatic && f.IsPublic).All(f => f.IsInitOnly),
+                  "ClothDebris's only public field is its readonly Status (nothing synced: it lives on a local slot)");
+            var cdun = new[] { "OnCommonUpdate", "OnDestroy", "OnWorldDestroy" }.Where(n => cd.Methods.FirstOrDefault(m => m.Name == n) is not { HasBody: true } m || !m.Body.HasExceptionHandlers).ToList();
+            check(cdun.Count == 0, "ClothDebris callbacks catch their exceptions" + (cdun.Count > 0 ? " - no handler in " + string.Join(", ", cdun) : ""));
+        }
+        // 0.34.0: Pop's shot record stays out of the inspector; its pieces run on each client in a PopDebris on a local
+        // slot, under Physics/Softbody with the other components the plugin makes, and their mesh is a ProceduralMesh
+        var pop = module.GetType("Softbody.Pop");
+        var hiddenShot = new[] { "Shot", "ShotTime", "ShotAt", "Shown" }
+            .Where(n => pop?.Fields.FirstOrDefault(f => f.Name == n) is not { } f || !f.CustomAttributes.Any(a => a.AttributeType.FullName == "FrooxEngine.HideInInspectorAttribute")).ToList();
+        check(pop != null && hiddenShot.Count == 0, "Pop's shot record (Shot, ShotTime, ShotAt, Shown) is [HideInInspector]" + (hiddenShot.Count > 0 ? " - not: " + string.Join(", ", hiddenShot) : ""));
+        var pd = module.GetType("Softbody.PopDebris");
+        check(pd != null && pd.IsPublic && !pd.IsAbstract && pd.BaseType?.FullName == "FrooxEngine.Component" && pd.Methods.Any(m => m.IsConstructor && !m.IsStatic && m.IsPublic && m.Parameters.Count == 0),
+              "public class Softbody.PopDebris : FrooxEngine.Component, with a public parameterless constructor");
+        if (pd != null)
+        {
+            var pdcat = pd.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "FrooxEngine.CategoryAttribute");
+            var pdpaths = pdcat?.ConstructorArguments[0].Value is CustomAttributeArgument[] pdarr ? pdarr.Select(x => (string)x.Value).ToArray() : Array.Empty<string>();
+            check(pdpaths.SequenceEqual(new[] { "Physics/Softbody" }), "PopDebris is under Physics/Softbody (the plugin makes it)");
+            var pdfields = pd.Fields.Where(f => !f.IsStatic && f.IsPublic).Select(f => (Name: f.Name, Type: f.FieldType.FullName)).ToList();
+            var drives = pd.Fields.FirstOrDefault(f => f.Name == "_hidden");
+            check(pdfields.SequenceEqual(ExpectedPopDebrisFields) && pd.Fields.Where(f => !f.IsStatic && f.IsPublic).All(f => f.IsInitOnly) &&
+                  drives != null && drives.IsFamily && drives.IsInitOnly && drives.FieldType.FullName == "FrooxEngine.SyncList`1<FrooxEngine.FieldDrive`1<System.Boolean>>",
+                  "PopDebris shows only its readonly Status, and keeps its hide drives in a protected readonly SyncList<FieldDrive<bool>> (local, as its slot)");
+            var pdun = new[] { "OnCommonUpdate", "OnDestroy", "OnWorldDestroy" }.Where(n => pd.Methods.FirstOrDefault(m => m.Name == n) is not { HasBody: true } m || !m.Body.HasExceptionHandlers).ToList();
+            check(pdun.Count == 0, "PopDebris callbacks catch their exceptions" + (pdun.Count > 0 ? " - no handler in " + string.Join(", ", pdun) : ""));
+        }
+        var pm = module.GetType("Softbody.PopDebrisMesh");
+        check(pm != null && pm.IsPublic && !pm.IsAbstract && pm.BaseType?.FullName == "FrooxEngine.ProceduralMesh" &&
+              pm.Methods.Any(m => m.IsConstructor && !m.IsStatic && m.IsPublic && m.Parameters.Count == 0),
+              "public class Softbody.PopDebrisMesh : FrooxEngine.ProceduralMesh, with a public parameterless constructor");
+        var pmOver = pm?.Methods.Where(m => m.IsVirtual && !m.IsNewSlot).Select(m => m.Name).ToHashSet() ?? new HashSet<string>();
+        check(new[] { "PrepareAssetUpdateData", "ClearMeshData", "UpdateMeshData" }.All(pmOver.Contains) &&
+              pm != null && !pm.Fields.Any(f => !f.IsStatic && f.FieldType.FullName.StartsWith("FrooxEngine.")),
+              "the pop's pieces mesh overrides PrepareAssetUpdateData, ClearMeshData and UpdateMeshData, and has no sync members of its own");
+        // the three fields sit with the tearing ones
+        var names = cloth?.Fields.Where(f => !f.IsStatic && f.IsPublic).Select(f => f.Name).ToList() ?? new List<string>();
+        int at = names.IndexOf("TearSpread");
+        check(at >= 0 && names.Skip(at + 1).Take(3).SequenceEqual(new[] { "MendTimer", "DuplicateOnMend", "CopyLifetime" }),
+              "Cloth.MendTimer, DuplicateOnMend and CopyLifetime come right after TearSpread (with the tearing settings)");
+    }
+
     static void ForbiddenBaseCallChecks(Action<bool, string> check, ModuleDefinition module)
     {
         using var fe = AssemblyDefinition.ReadAssembly(Path.Combine(Game, "FrooxEngine.dll"));

@@ -39,7 +39,7 @@ Friends' managers update themselves from the latest release of a public GitHub r
 `update-repo.txt`), so a new version no longer needs a new zip:
 
 - **Each release** has `update.json` (the pack's manifest, signed), `Softbody.dll`, `Renderite.Unity.dll`,
-  `SoftbodyManager.exe` and the whole pack's zip (for new friends). The manager reads
+  `SoftbodyManager.exe`, the renderer files (1.2.0; see below) and the whole pack's zip (for new friends). The manager reads
   `https://github.com/<repo>/releases/latest/download/update.json` when it opens; with a newer release for the friend's
   Resonite renderer, **Update** downloads the files into `payload.new`, checks each one's sha256 against the signed manifest,
   then swaps the payload (the old one stays as `payload.previous`), installs Softbody (on or off, as it was; backups and log
@@ -86,6 +86,28 @@ Lenki's idea: friends get the builds Lenki tested, and only those who ask get th
   unstable zip) gets the Back to stable card too.
 - Friends on different builds can't be in a session together when the compatibility hash differs; the Try unstable
   question says so.
+
+## Renderer files (1.2.0: the smoke shader)
+
+From 0.27.0 the fork needs a file besides the patched DLL: the smoke shader's bundle,
+`Renderite.Renderer_Data\StreamingAssets\Softbody\softbody_smoke.bundle` (built by `SoftbodyShaders\build.ps1`, put in
+`RendererSoftbody` by `make_softbody_renderer.py`; without it the smoke falls back to Unlit discs).
+
+- **The pack:** `make_friend_pack.py` takes every file in the fork's `StreamingAssets\Softbody` folder (what runs here; it
+  warns when the fork's copy differs from `Softbody\GpuFluid\Shaders`), puts it in the payload and the release next to the
+  DLLs, and lists it in the manifest with its sha256 (`ForkFiles`: plain names with an extension, at most 16). A manifest
+  without the list (packs before 0.27.0) means no such files. `publish_release.py` checks each against the signed manifest
+  and uploads it with the rest.
+- **The manager:** setting up the fork puts the files in; an update downloads them with the DLLs (each checked against the
+  signed manifest) and makes the fork's folder match the release: a file it replaces, and one the release does not list
+  (going back to a release without the smoke shader), goes to `SoftbodyBackups\Renderer\<name>.<sha8>.bak`. Step 2 checks
+  them: a fork that is fine but lacks one shows **Finish the renderer fork** with a **Repair** button.
+- **The rollout:** managers before 1.2.0 skip the list (System.Text.Json ignores fields it does not know), so a friend on
+  1.1.0 who updates to 0.27.0 gets the DLLs and the new manager, but not the shader. The 1.2.0 manager it swaps in sees on
+  its first start that the payload lacks a listed file, downloads it from the pack's own release
+  (`releases/download/<tag>/<name>`, sha256 from the manifest, which is the release's signed one word for word) and puts it
+  in the fork (Resonite closed; otherwise step 2's Repair does it later). That restart is the one 1.1.0 announces as
+  finishing the update.
 
 ## The look (1.1.0)
 

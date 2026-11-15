@@ -48,9 +48,12 @@ public class FluidEmitter : Component
     /// <summary>0..20: water 0.02, oil 0.1, honey 0.6; above 1 thicker still (0.19.0: goo, mud).</summary>
     public readonly Sync<float> Viscosity;
     /// <summary>0.27.0, GPU only: makes a Viscosity above 1 a real viscosity (an implicit solve, Weiler et al. 2018) instead of
-    /// extra smoothing passes. A thick liquid then keeps a spin and a rounded shape, sags and folds instead of slumping, and the
-    /// same setting is as thick at every particle size: about 4 is honey, 10 is 0.08 m²/s, 15 (the most it takes) 0.9 m²/s.
-    /// Costs GPU time (about 10 ms a frame at 15 for 100,000 particles of it). Off: as before. On the CPU it does nothing.</summary>
+    /// extra smoothing passes. A thick liquid then keeps a spin and a rounded shape, sags and folds instead of slumping: at 2.5 cm
+    /// particles about 4 is honey, 10 is 0.08 m²/s, 15 is 0.9 m²/s and 20 is 10 m²/s (bigger particles get it in proportion
+    /// to their size, so it looks about as thick in a bigger world). With the renderer's thick grip (2026-11-14) it also holds on
+    /// to the shapes it touches: it creeps down slopes and rides along on moving ones instead of sliding off, and it takes Viscosity
+    /// up to 20 (before: 15). Costs GPU time: on an RTX 4070 a 43,000-particle pool of it takes about 12 ms a frame at 15 and
+    /// 31 ms at 20, against 4 ms as water; a few thousand particles, a few ms. Off: as before. On the CPU it does nothing.</summary>
     public readonly Sync<bool> ThickLiquid;
     /// <summary>0..5 (0.25.2; was 0..1): how strongly it holds together (surface tension): water 0.3, slime 0.9; above 1 it beads
     /// up and thickens too (a viscosity of at least 0.75 for each unit over 1).</summary>

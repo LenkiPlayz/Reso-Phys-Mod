@@ -314,18 +314,25 @@ static partial class Program
         }
     }
 
-    /// <summary>A frame of smoke as quads for SoftbodyShaders' preview (build.ps1 -Preview): a column lit by a low sun from one side,
-    /// seen from beside it ("side") or against the sun ("back"), with the camera, light and sky the preview renders it with.</summary>
+    /// <summary>A frame of smoke as quads for SoftbodyShaders' preview (build.ps1 -Preview): a column lit by a low sun, seen with the
+    /// sun behind the camera ("front"), from beside it ("side") or against it ("back"); "thin" in the view: a GasEmitter at its
+    /// defaults (30 puffs a second, opacity 0.25, 0.1 to 0.6 m, 5 s), else a dense plume. With the camera, light and sky the preview
+    /// renders it with.</summary>
     static int GasPreview(string path, string view)
     {
         var floor = FleshCollider.Box(new Vector3(0, -0.1f, 0), Quaternion.Identity, new Vector3(3f, 0.1f, 3f));
         var sun = Vector3.Normalize(new Vector3(-0.7f, 0.55f, 0.35f));
-        var look = new Vector3(0f, 1.1f, 0f);
-        var head = view == "back" ? look + Vector3.Normalize(new Vector3(sun.X, 0f, sun.Z)) * -3.2f + new Vector3(0, -0.2f, 0) : new Vector3(2.6f, 1.3f, 1.2f);
+        bool thin = view.Contains("thin");
+        var look = new Vector3(0f, thin ? 0.9f : 1.1f, 0f);
+        var sunXZ = Vector3.Normalize(new Vector3(sun.X, 0f, sun.Z));
+        var toCamera = view.Contains("back") ? -sunXZ : view.Contains("side") ? new Vector3(-sunXZ.Z, 0f, sunXZ.X) : sunXZ;
+        var head = look + toCamera * (thin ? 2.4f : 3.2f) + new Vector3(0, 0.2f, 0);
         var g = new GasScene { Quads = true, TowardsLight = sun, Head = head };
         g.Add(new[] { floor });
-        var r = GasRec(7, new Vector3(0, 0.05f, 0), NozzleUp, rate: 160f, life: 6f, buoyancy: 0.45f, swirl: 0.35f, maxPuffs: 4000);
-        r.StartSize = 0.18f; r.EndSize = 0.9f; r.ColR = 0.82f; r.ColG = 0.83f; r.ColB = 0.86f; r.ColA = 0.35f; r.Spread = 0.25f;
+        var r = thin ? GasRec(7, new Vector3(0, 0.05f, 0), NozzleUp, rate: 30f, life: 5f, buoyancy: 0.5f, swirl: 0.3f, maxPuffs: 2000)
+                     : GasRec(7, new Vector3(0, 0.05f, 0), NozzleUp, rate: 160f, life: 6f, buoyancy: 0.45f, swirl: 0.35f, maxPuffs: 4000);
+        if (thin) { r.Speed = 0.4f; r.StartSize = 0.1f; r.EndSize = 0.6f; r.ColR = 0.8f; r.ColG = 0.8f; r.ColB = 0.8f; r.ColA = 0.25f; r.Spread = 0.15f; }
+        else { r.StartSize = 0.18f; r.EndSize = 0.9f; r.ColR = 0.82f; r.ColG = 0.83f; r.ColB = 0.86f; r.ColA = 0.35f; r.Spread = 0.25f; }
         g.Gas.Add(r);
         g.Run(6f);
         g.Puffs();

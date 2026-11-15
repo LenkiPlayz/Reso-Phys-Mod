@@ -97,7 +97,7 @@ cbuffer Params : register(b0)
     uint4 _V0;     // 0.27.0 vortex particles: x slots, y spawns this frame, z the ring's next slot, w 1: on
     float4 _V1;    // 0.27.0 vortex particles: x lifetime (s), y decay time (s), z 1 / the strongest emitter's Vortices, w unused
     float4 _I0;    // 0.27.0 thick liquid: x this solve's dt (the slow substeps'), y relative tolerance, z 0.01 h², w the warm start's share
-    uint4 _I1;     // 0.27.0 thick liquid: x unused, y most iterations, zw unused
+    uint4 _I1;     // 0.27.0 thick liquid: x unused, y most iterations, z (thick grip) the wall grip (float bits), w unused
     float4 _S0;    // 0.27.0 smoke shader: xyz towards the world's main light (the gas's space; 0: none), w 1: the gas as quads for it
     float4 _S1;    // 0.27.0 smoke shader: x the density grid's cell (m), y self-shadow strength, z 1: spray and foam as quads, w unused
 };
@@ -197,6 +197,7 @@ RWStructuredBuffer<float4> IvGuess2;    // the sort's copy
 RWStructuredBuffer<float>  IvPartial;   // 2 per group: its partial sums
 RWStructuredBuffer<float>  IvScalars;   // 0 r.z, 1 alpha, 2 beta, 3 |b|² over the thick rows, 4 r.r, 5 done (1), 6 iterations
 StructuredBuffer<float>    IvDone;      // IvScalars again, read-only (an SRV: the matrix product already binds 8 UAVs)
+StructuredBuffer<float4>   ContactR;    // thick grip: Contact again, read-only (an SRV, for the same reason)
 RWStructuredBuffer<float4> GasPos;      // 0.26.0: xyz, w age (seconds; < 0: an empty slot)
 RWStructuredBuffer<float4> GasVel;      // 0.26.0: xyz, w lifetime (seconds)
 RWStructuredBuffer<uint>   GasEmit;     // 0.26.0: its emitter's slot in GasEmitters
@@ -911,23 +912,40 @@ void Collide(uint3 id : SV_DispatchThreadID)
     float3 prefer = bl > 1e-6 ? back / bl : 0;
     // 0.19.0: the grid's lists, then the global one; moving shapes come first in each (the runtime adds them first), so a
     // floor has the last say over a box pressed into the liquid
-    uint cells = _U2.x * _U2.y * _U2.z;
+    // (thick grip: and which shape pushed it last, so a thick liquid grips a moving shape as it moves)
+    uint cells = _U2.x * _U2.y * _U2.z, hit = 0;
     if (cells > 0)
     {
         uint ci = ShapeCellOf(p);
         uint s = ShapeGrid[ci], e = ShapeGrid[ci + 1];
-        for (uint q = s; q < e; q++) PushShape(p, x0, Shapes[ShapeGrid[cells + 1 + q]], mask, prefer);
+        for (uint q = s; q < e; q++)
+        {
+            uint k = ShapeGrid[cells + 1 + q];
+            float3 pb = p;
+            PushShape(p, x0, Shapes[k], mask, prefer);
+            if (any(p != pb)) hit = k + 1;
+        }
     }
-    for (uint g = 0; g < _U0.w; g++) PushShape(p, x0, Shapes[GlobalShapes[g]], mask, prefer);
+    for (uint g = 0; g < _U0.w; g++)
+    {
+        uint k = GlobalShapes[g];
+        float3 pb = p;
+        PushShape(p, x0, Shapes[k], mask, prefer);
+        if (any(p != pb)) hit = k + 1;
+    }
     if (any(p != before))
     {
         // any iteration's push counts (0.15.2: a resting particle is pushed out in the first one only)
+        // (thick grip: w is 1 + the shape that pushed it last; everything else only asks w > 0)
         Pred[i] = float4(p, pr.w);
         float3 d = p - before; float l = length(d);
-        Contact[i] = float4(l > 1e-9 ? d / l : float3(0, 1, 0), 1);
+        Contact[i] = float4(l > 1e-9 ? d / l : float3(0, 1, 0), (float)max(hit, 1u));
     }
     if (last && Contact[i].w > 0) InterlockedAdd(State[9], 1);
 }
+
+// thick grip: the velocity of the shape a particle touches (Contact w: 1 + the shape that pushed it last; 0: none)
+float3 WallVelocity(float4 ct) { return ct.w > 0 ? Shapes[(uint)ct.w - 1].V.xyz : 0; }
 
 // ---------------------------------------------------------------------------------------------------------------- velocities
 
@@ -1075,10 +1093,14 @@ void VelocityB(uint3 id : SV_DispatchThreadID)
     if (ct.w > 0)
     {
         // colliders: friction against the surface, and adhesion pulling it back onto it
+        // (thick grip: a gripping thick liquid's friction is against the shape's own motion, as its grip in the solve; water's,
+        // and a thick liquid's with the grip off, against standing still, as before)
         float3 n = ct.xyz;
         float vn = dot(v, n);
-        float3 vt = v - n * vn;
-        v = n * vn + vt * exp(-max(li.a.w, min(li.a.x, 1)) * 30 * _F1.w);
+        float3 vw = li.d.y > 0 && asfloat(_I1.z) > 0 ? WallVelocity(ct) : 0;
+        float3 vr = v - vw;
+        float3 vt = vr - n * dot(vr, n);
+        v += vt * (exp(-max(li.a.w, min(li.a.x, 1)) * 30 * _F1.w) - 1);
         if (slow && li.a.z > 0 && vn > 0) v -= n * min(vn, li.a.z * 2);
     }
     Vel[i] = float4(v, Vel[i].w);
@@ -2054,6 +2076,12 @@ void GasTail(uint3 id : SV_DispatchThreadID)
 #define GAS_SORT_FAR 64.0          // metres: farther puffs share the last bucket
 #define GAS_LIGHT_STEPS 12         // the march towards the light: cells, each 1.25 times the last (about 54 cells in all)
 #define GAS_SKY_STEPS 6            // and up, for the sky
+// the shader draws a puff softer than a full sphere of its opacity (a round falloff and wisps: about 0.6 of it on average)
+#define GAS_DRAWN_SHARE 0.6
+// white smoke scatters most of the light it stops onwards (single-scattering albedo near 1), so light still gets deep into thick
+// smoke: the shading sees a quarter of the optical depth (and a sixteenth for a second, softer share). Without it a dense plume
+// (the tests' 900 puffs) went black inside: half its puffs got under 0.1 % of the light.
+#define GAS_SCATTER 0.25
 
 // a live puff as drawn: its centre, radius, colour and opacity, and its age (a share of its life); false: nothing to draw
 bool GasLook(uint i, out float3 p, out float rad, out float4 col, out float t)
@@ -2132,7 +2160,7 @@ void GasSplat(uint3 id : SV_DispatchThreadID)
     InterlockedAdd(GasBuckets[GasBucket(p)], 1);
     float c = _S1.x;
     float sigma = -log(1 - min(col.a, 0.995)) / (2 * rad);
-    float amount = min(sigma * 4.18879 * rad * rad * rad / (c * c * c), 2e5) * GAS_DENSITY_SCALE;
+    float amount = min(GAS_DRAWN_SHARE * sigma * 4.18879 * rad * rad * rad / (c * c * c), 2e5) * GAS_DENSITY_SCALE;
     float3 g = p / c - 0.5;
     float3 b = floor(g);
     float3 f = g - b;
@@ -2181,11 +2209,10 @@ void GasDrawQuads(uint3 id : SV_DispatchThreadID)
     float lit = 1;
     if (dot(_S0.xyz, _S0.xyz) > 0.25)
     {
-        // (light scattered on through the smoke keeps some of it lit: a second, weaker extinction for a third of it)
-        float tau = GasDepthAlong(p, normalize(_S0.xyz), GAS_LIGHT_STEPS);
-        lit = 0.65 * exp(-tau) + 0.35 * exp(-0.3 * tau);
+        float tau = GAS_SCATTER * GasDepthAlong(p, normalize(_S0.xyz), GAS_LIGHT_STEPS);
+        lit = 0.6 * exp(-tau) + 0.4 * exp(-0.25 * tau);
     }
-    float sky = 0.25 + 0.75 * exp(-0.6 * GasDepthAlong(p, float3(0, 1, 0), GAS_SKY_STEPS));
+    float sky = 0.4 + 0.6 * exp(-GAS_SCATTER * GasDepthAlong(p, float3(0, 1, 0), GAS_SKY_STEPS));
     // its own random number, from its slot (the same all its life)
     uint h = i * 747796405u + 2891336453u;
     h = ((h >> ((h >> 28) + 4)) ^ h) * 277803737u;
@@ -2535,6 +2562,16 @@ float IvPair(float r2, float nui, float nuj, float ni, float nj)
     return 10 * _I0.x * nu * _F1.x * (-_F0.w) * t * t / (ni * nj * r * (r2 + _I0.z));
 }
 
+// thick grip (fork, 2026-11-14): a thick particle touching a collider is held back along it, (A p)_i += b_i (p_i - n (n . p_i)) with
+// b_i = dt grip nu_i / size² (the wall's shear on the first layer), so the solve itself carries the wall's stillness into the
+// liquid: VelocityB's friction alone, after the solve, was spread over the liquid by the next solve as a mere drag (it slid)
+float IvWall(uint i, float nui)
+{
+    float k = asfloat(_I1.z);
+    if (!(k > 0) || !(ContactR[i].w > 0)) return 0;
+    return _I0.x * k * nui / (_F3.w * _F3.w);
+}
+
 float3 IvPrecond(uint i, float3 r)
 {
     float4 a = IvPinv[2 * i], b = IvPinv[2 * i + 1];
@@ -2596,6 +2633,7 @@ void IvDiagonal(uint3 id : SV_DispatchThreadID)
     uint i = id.x;
     if (i >= Count()) return;
     float3 dg = float3(1, 1, 1), od = 0;   // the diagonal (xx, yy, zz) and off it (xy, xz, yz)
+    float bw = 0;
     if (IvP[i].w > 0)
     {
         float4 pi = Pred[i];
@@ -2610,13 +2648,20 @@ void IvDiagonal(uint3 id : SV_DispatchThreadID)
             dg += c * x * x;
             od += c * float3(x.x * x.y, x.x * x.z, x.y * x.z);
         }
+        bw = IvWall(i, nui);
+        if (bw > 0)
+        {
+            float3 n = ContactR[i].xyz;
+            dg += bw * (1 - n * n);
+            od -= bw * float3(n.x * n.y, n.x * n.z, n.y * n.z);
+        }
     }
     float a00 = dg.y * dg.z - od.z * od.z, a01 = od.y * od.z - od.x * dg.z, a02 = od.x * od.z - od.y * dg.y;
     float a11 = dg.x * dg.z - od.y * od.y, a12 = od.x * od.y - dg.x * od.z, a22 = dg.x * dg.y - od.x * od.x;
     float det = dg.x * a00 + od.x * a01 + od.y * a02;
     float inv = det > 1e-20 ? 1 / det : 0;
     IvPinv[2 * i] = float4(a00, a11, a22, a01) * inv;
-    IvPinv[2 * i + 1] = float4(a02, a12, 0, 0) * inv;
+    IvPinv[2 * i + 1] = float4(a02 * inv, a12 * inv, bw, 0);   // (thick grip: z its grip, for IvResidual's b)
 }
 
 [numthreads(1, 1, 1)]
@@ -2649,6 +2694,8 @@ void IvMatVec(uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID, uint
                 float c = IvPair(dot(x, x), nui, IvNu(asuint(pj.w)), ni, IvDensity(j));
                 if (c > 0) q += x * (c * dot(x, p.xyz - IvP[j].xyz));
             }
+            float bw = IvWall(i, nui);
+            if (bw > 0) { float3 n = ContactR[i].xyz; q += bw * (p.xyz - n * dot(n, p.xyz)); }
             pq = dot(p.xyz, q);
         }
         IvQ[i] = float4(q, 0);
@@ -2668,6 +2715,9 @@ void IvResidual(uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID, ui
         if (p.w > 0)
         {
             float3 b = Delta[i].xyz;
+            // thick grip: (A + B) x = b + B v_wall: the grip holds the slide to the shape's own velocity
+            float bw = IvPinv[2 * i + 1].z;
+            if (bw > 0) { float4 ct = ContactR[i]; float3 vw = WallVelocity(ct); b += bw * (vw - ct.xyz * dot(ct.xyz, vw)); }
             float3 r = b - IvQ[i].xyz;
             float3 z = IvPrecond(i, r);
             IvR[i] = float4(r, 0);

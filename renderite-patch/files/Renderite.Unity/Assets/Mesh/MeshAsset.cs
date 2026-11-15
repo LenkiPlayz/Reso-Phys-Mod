@@ -22,6 +22,12 @@ namespace Renderite.Unity
         public const string SoftbodyHandshakeName = @"Local\Softbody.RendererPatch.SkinnedInPlace.v1";
         static readonly System.Threading.EventWaitHandle softbodyHandshake;
 
+        // Softbody fork, v2 (Softbody 0.30.0, avatar cloth): the in-place update also takes the triangles (every submesh keeping
+        // its index range), the UV channels and the vertex colours, so a tear in avatar cloth (spare vertices taking over a torn
+        // edge) needs no new mesh. The plugin sends those only when it finds this second event.
+        public const string SoftbodyHandshakeNameV2 = @"Local\Softbody.RendererPatch.SkinnedInPlace.v2";
+        static readonly System.Threading.EventWaitHandle softbodyHandshakeV2;
+
         static MeshAsset()
         {
             try
@@ -32,6 +38,16 @@ namespace Renderite.Unity
             catch (Exception ex)
             {
                 Debug.LogWarning("[Softbody fork] could not open the Softbody handshake event: " + ex.Message);
+            }
+
+            try
+            {
+                softbodyHandshakeV2 = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.ManualReset, SoftbodyHandshakeNameV2);
+                Debug.Log("[Softbody fork] in-place triangles, UVs and colours of skinned meshes enabled; handshake " + SoftbodyHandshakeNameV2 + " open");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[Softbody fork] could not open the Softbody v2 handshake event: " + ex.Message);
             }
         }
 
@@ -163,6 +179,7 @@ namespace Renderite.Unity
         unsafe void UploadIndexBuffer(MeshBuffer buffer, UnityEngine.Mesh mesh)
         {
             UpdateIndexLayout(meshBuffer, mesh);
+            softbodyIndexCount = meshBuffer.IndexCount;   // Softbody fork, v2: see IndicesFitInPlace
 
             try
             {
@@ -242,16 +259,21 @@ namespace Renderite.Unity
 
         // ---- Softbody fork: in-place vertex updates of skinned meshes
 
-        static bool IsSkinnedStreamsOnly(MeshUploadHint hint)
+        static readonly MeshUploadHint.Flag[] softbodyUvFlags =
+        {
+            MeshUploadHint.Flag.UV0s, MeshUploadHint.Flag.UV1s, MeshUploadHint.Flag.UV2s, MeshUploadHint.Flag.UV3s,
+            MeshUploadHint.Flag.UV4s, MeshUploadHint.Flag.UV5s, MeshUploadHint.Flag.UV6s, MeshUploadHint.Flag.UV7s,
+        };
+
+        /// <summary>An update the in-place path takes: positions, normals or tangents, and with them (v2) colours, UV channels
+        /// and triangles; nothing that changes the vertex or submesh layout, the bones or the blendshapes.</summary>
+        static bool IsSkinnedInPlace(MeshUploadHint hint)
         {
             if (!(hint[MeshUploadHint.Flag.Positions] || hint[MeshUploadHint.Flag.Normals] || hint[MeshUploadHint.Flag.Tangents]))
                 return false;
 
-            return !hint[MeshUploadHint.Flag.VertexLayout] && !hint[MeshUploadHint.Flag.SubmeshLayout] && !hint[MeshUploadHint.Flag.Geometry]
-                && !hint[MeshUploadHint.Flag.BindPoses] && !hint[MeshUploadHint.Flag.BoneWeights] && !hint[MeshUploadHint.Flag.Blendshapes]
-                && !hint[MeshUploadHint.Flag.Colors] && !hint[MeshUploadHint.Flag.UV0s] && !hint[MeshUploadHint.Flag.UV1s]
-                && !hint[MeshUploadHint.Flag.UV2s] && !hint[MeshUploadHint.Flag.UV3s] && !hint[MeshUploadHint.Flag.UV4s]
-                && !hint[MeshUploadHint.Flag.UV5s] && !hint[MeshUploadHint.Flag.UV6s] && !hint[MeshUploadHint.Flag.UV7s];
+            return !hint[MeshUploadHint.Flag.VertexLayout] && !hint[MeshUploadHint.Flag.SubmeshLayout]
+                && !hint[MeshUploadHint.Flag.BindPoses] && !hint[MeshUploadHint.Flag.BoneWeights] && !hint[MeshUploadHint.Flag.Blendshapes];
         }
 
         static int FormatSize(VertexAttributeFormat format)
@@ -272,16 +294,28 @@ namespace Renderite.Unity
             }
         }
 
-        /// <summary>Writes the flagged positions / normals / tangents from the buffer into the mesh through Unity's setters.
-        /// False (nothing written) when the buffer does not hold them as Float32.</summary>
+        /// <summary>Writes the flagged positions / normals / tangents (v2: and colours, UV channels and triangles) from the
+        /// buffer into the mesh through Unity's setters. All or nothing: false (nothing written) when the buffer does not hold
+        /// them in a format this takes (Float32 positions, normals, tangents and UVs; Float32, half or byte colours), or its
+        /// triangles would not fit the mesh's index buffer as it is.</summary>
         unsafe bool TrySetSkinnedStreams(MeshBuffer buffer, UnityEngine.Mesh mesh, MeshUploadHint hint)
         {
-            int offset = 0, posOffset = -1, normalOffset = -1, tangentOffset = -1;
+            int offset = 0, posOffset = -1, normalOffset = -1, tangentOffset = -1, colorOffset = -1;
+            var colorFormat = UnityEngine.Rendering.VertexAttributeFormat.Float32;
+            int* uvOffset = stackalloc int[8];
+            int* uvDimensions = stackalloc int[8];
+
+            for (int c = 0; c < 8; c++)
+            {
+                uvOffset[c] = -1;
+                uvDimensions[c] = 0;
+            }
 
             for (int i = 0; i < buffer.VertexAttributeCount; i++)
             {
                 var attribute = buffer.VertexAttributes[i];
-                bool float32 = attribute.format.ToUnity() == UnityEngine.Rendering.VertexAttributeFormat.Float32;
+                var format = attribute.format.ToUnity();
+                bool float32 = format == UnityEngine.Rendering.VertexAttributeFormat.Float32;
 
                 if (attribute.attribute == VertexAttributeType.Position && float32 && attribute.dimensions == 3)
                     posOffset = offset;
@@ -289,6 +323,21 @@ namespace Renderite.Unity
                     normalOffset = offset;
                 if (attribute.attribute == VertexAttributeType.Tangent && float32 && attribute.dimensions == 4)
                     tangentOffset = offset;
+
+                if (attribute.attribute == VertexAttributeType.Color && attribute.dimensions == 4 && (float32
+                    || format == UnityEngine.Rendering.VertexAttributeFormat.Float16 || format == UnityEngine.Rendering.VertexAttributeFormat.UNorm8))
+                {
+                    colorOffset = offset;
+                    colorFormat = format;
+                }
+
+                int uv = attribute.attribute - VertexAttributeType.UV0;
+
+                if (uv >= 0 && uv < 8 && float32 && attribute.dimensions >= 2 && attribute.dimensions <= 4)
+                {
+                    uvOffset[uv] = offset;
+                    uvDimensions[uv] = attribute.dimensions;
+                }
 
                 offset += attribute.dimensions * FormatSize(attribute.format);
             }
@@ -299,8 +348,17 @@ namespace Renderite.Unity
             bool positions = hint[MeshUploadHint.Flag.Positions];
             bool normals = hint[MeshUploadHint.Flag.Normals];
             bool tangents = hint[MeshUploadHint.Flag.Tangents];
+            bool colors = hint[MeshUploadHint.Flag.Colors];
+            bool triangles = hint[MeshUploadHint.Flag.Geometry];
 
-            if ((positions && posOffset < 0) || (normals && normalOffset < 0) || (tangents && tangentOffset < 0))
+            if ((positions && posOffset < 0) || (normals && normalOffset < 0) || (tangents && tangentOffset < 0) || (colors && colorOffset < 0))
+                return false;
+
+            for (int c = 0; c < 8; c++)
+                if (hint[softbodyUvFlags[c]] && uvOffset[c] < 0)
+                    return false;
+
+            if (triangles && !IndicesFitInPlace(buffer, mesh))
                 return false;
 
             var data = buffer.GetRawVertexBufferData();
@@ -316,11 +374,30 @@ namespace Renderite.Unity
                     SetStream<UnityEngine.Vector3>(source, stride, normalOffset, count, 12, 1, mesh);
                 if (tangents)
                     SetStream<UnityEngine.Vector4>(source, stride, tangentOffset, count, 16, 2, mesh);
+                if (colors)
+                    SetColorStream(source, stride, colorOffset, colorFormat, count, mesh);
+
+                for (int c = 0; c < 8; c++)
+                {
+                    if (!hint[softbodyUvFlags[c]])
+                        continue;
+
+                    if (uvDimensions[c] == 2)
+                        SetStream<UnityEngine.Vector2>(source, stride, uvOffset[c], count, 8, 4 + c, mesh);
+                    else if (uvDimensions[c] == 3)
+                        SetStream<UnityEngine.Vector3>(source, stride, uvOffset[c], count, 12, 4 + c, mesh);
+                    else
+                        SetStream<UnityEngine.Vector4>(source, stride, uvOffset[c], count, 16, 4 + c, mesh);
+                }
             }
+
+            if (triangles)
+                SetIndicesInPlace(buffer, mesh);
 
             return true;
         }
 
+        /// <summary>which: 0 positions, 1 normals, 2 tangents, 3 colours (v2), 4 + n UV channel n (v2).</summary>
         static unsafe void SetStream<T>(byte* source, int stride, int offset, int count, int size, int which, UnityEngine.Mesh mesh)
             where T : struct
         {
@@ -337,11 +414,131 @@ namespace Renderite.Unity
                     mesh.SetVertices(native);
                 else if (which == 1)
                     mesh.SetNormals(native);
-                else
+                else if (which == 2)
                     mesh.SetTangents(native);
+                else if (which == 3)
+                    mesh.SetColors(native);
+                else
+                    mesh.SetUVs(which - 4, native);
             }
             finally
             {
+                native.Dispose();
+            }
+        }
+
+        /// <summary>v2: the vertex colours through Unity's setter: bytes as Color32, floats as Color, and halves (what the
+        /// engine encodes) widened to floats, exactly. Unity keeps the format of the last setter, so a mesh with half colours
+        /// changes to float colours on its first in-place colour update.</summary>
+        static unsafe void SetColorStream(byte* source, int stride, int offset, UnityEngine.Rendering.VertexAttributeFormat format, int count,
+            UnityEngine.Mesh mesh)
+        {
+            if (format == UnityEngine.Rendering.VertexAttributeFormat.UNorm8)
+            {
+                SetStream<UnityEngine.Color32>(source, stride, offset, count, 4, 3, mesh);
+                return;
+            }
+
+            if (format == UnityEngine.Rendering.VertexAttributeFormat.Float32)
+            {
+                SetStream<UnityEngine.Color>(source, stride, offset, count, 16, 3, mesh);
+                return;
+            }
+
+            var native = new NativeArray<UnityEngine.Color>(count, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+
+            try
+            {
+                for (int v = 0; v < count; v++)
+                {
+                    ushort* h = (ushort*)(source + (long)v * stride + offset);
+                    native[v] = new UnityEngine.Color(HalfToFloat(h[0]), HalfToFloat(h[1]), HalfToFloat(h[2]), HalfToFloat(h[3]));
+                }
+
+                mesh.SetColors(native);
+            }
+            finally
+            {
+                native.Dispose();
+            }
+        }
+
+        /// <summary>An IEEE half to a float (exact: every half is a float).</summary>
+        static unsafe float HalfToFloat(ushort half)
+        {
+            uint sign = (uint)(half & 0x8000) << 16;
+            uint exponent = ((uint)half >> 10) & 0x1f;
+            uint mantissa = (uint)half & 0x3ff;
+            uint bits;
+
+            if (exponent == 0)
+            {
+                if (mantissa == 0)
+                    bits = sign;
+                else
+                {
+                    // a subnormal half is a normal float
+                    uint e = 113;
+
+                    while ((mantissa & 0x400) == 0)
+                    {
+                        mantissa <<= 1;
+                        e--;
+                    }
+
+                    bits = sign | (e << 23) | ((mantissa & 0x3ff) << 13);
+                }
+            }
+            else if (exponent == 31)
+                bits = sign | 0x7f800000u | (mantissa << 13);
+            else
+                bits = sign | ((exponent + 112) << 23) | (mantissa << 13);
+
+            return *(float*)&bits;
+        }
+
+        // the index count the mesh's index buffer was last laid out for (UploadIndexBuffer)
+        int softbodyIndexCount = -1;
+
+        /// <summary>v2: whether the buffer's triangles go into the mesh's index buffer as it is laid out: the same index format
+        /// and count, the same submeshes with the same index ranges and topology. Then only which vertices they use differs
+        /// (a tear in avatar cloth moves triangle corners onto spare vertices).</summary>
+        bool IndicesFitInPlace(MeshBuffer buffer, UnityEngine.Mesh mesh)
+        {
+            if (lastIndexBufferFormat != buffer.IndexBufferFormat || buffer.IndexCount != softbodyIndexCount)
+                return false;
+
+            if (buffer.Submeshes == null || mesh.subMeshCount != buffer.SubmeshCount || buffer.Submeshes.Count < buffer.SubmeshCount)
+                return false;
+
+            for (int i = 0; i < buffer.SubmeshCount; i++)
+            {
+                var have = mesh.GetSubMesh(i);
+                var want = buffer.Submeshes[i];
+
+                if (have.indexStart != want.indexStart || have.indexCount != want.indexCount || have.topology != want.topology.ToUnity())
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>v2: the buffer's indices into the mesh's index buffer, laid out as it is (see IndicesFitInPlace).</summary>
+        unsafe void SetIndicesInPlace(MeshBuffer buffer, UnityEngine.Mesh mesh)
+        {
+            var data = buffer.GetRawIndexBufferData();
+
+            fixed (void* ptr = data)
+            {
+                NativeArray<byte> native;
+
+                if (RenderingManager.IsDebug)
+                    native = new NativeArray<byte>(data.ToArray(), Allocator.Persistent);
+                else
+                    native = NativeArrayUnsafeUtility.ConvertExistingDataToNativeArray<byte>(ptr, data.Length, Allocator.None);
+
+                mesh.SetIndexBufferData(native, 0, 0, data.Length, UPDATE_FLAGS);
+
                 native.Dispose();
             }
         }
@@ -386,7 +583,8 @@ namespace Renderite.Unity
             // Softbody fork: a vertex-streams-only update (positions / normals / tangents) of a skinned mesh goes into the
             // existing mesh instead of destroying it. Unity's own setters place the data whatever stream split Unity chose for
             // the skinned mesh, and bind poses, bone weights, blendshapes, submeshes and indices are left as they are.
-            if (mesh != null && lastIsSkinned && mesh.isReadable && firstUploadCompleted && IsSkinnedStreamsOnly(uploadHint)
+            // v2: colours, UV channels and triangles (into the index buffer as it is laid out) come the same way.
+            if (mesh != null && lastIsSkinned && mesh.isReadable && firstUploadCompleted && IsSkinnedInPlace(uploadHint)
                 && meshBuffer.VertexCount == mesh.vertexCount && TrySetSkinnedStreams(meshBuffer, mesh, uploadHint))
             {
                 meshBuffer = null;

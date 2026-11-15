@@ -13,8 +13,9 @@ by hand on GitHub: edit the release, tick or untick "Set as a pre-release", and 
 Needs the GitHub CLI (gh), signed in once ("gh auth login"), and the repository named in update-repo.txt (made on GitHub with a
 README, so it has a first commit for the tag). Checks first that update.json is signed with this PC's key, as the managers will
 check it, and that every file matches its checksum in the signed manifest; a tag is uploaded once. Then uploads update.json,
-Softbody.dll, Renderite.Unity.dll, SoftbodyManager.exe and the pack's zip. --dry-run checks everything and shows what it would
-change on GitHub, without changing anything.
+Softbody.dll, Renderite.Unity.dll, SoftbodyManager.exe, the renderer files the manifest lists (1.2.0; 0.27.0: the smoke shader,
+softbody_smoke.bundle) and the pack's zip. --dry-run checks everything and shows what it would change on GitHub, without
+changing anything.
 """
 import argparse
 import hashlib
@@ -47,6 +48,16 @@ def find_gh():
         if os.path.exists(p):
             return p
     return None
+
+
+TAKEN = {"softbody.dll", "renderite.unity.dll", "softbodymanager.exe", "manifest.json", "update.json"}
+
+
+def usable_name(name):
+    """1.2.0: a renderer file's name as the manager takes it (as in make_friend_pack.py)."""
+    return (isinstance(name, str) and len(name) <= 64 and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+", name) is not None
+            and not re.fullmatch(r"(?i)con|prn|aux|nul|com\d|lpt\d", name.split(".")[0]) and name.lower() not in TAKEN
+            and not name.lower().endswith(".part"))
 
 
 def rank(tag):
@@ -166,9 +177,23 @@ def main():
         if not os.path.exists(path) or sha(path) != manifest.get(key):
             sys.exit(f"{name} is missing or does not match the signed manifest: make the release again")
         files.append(path)
+    extras = manifest.get("ForkFiles") or []   # 1.2.0: the renderer files (0.27.0: the smoke shader)
+    if not isinstance(extras, list) or len(extras) > 16:
+        sys.exit("the signed manifest's list of renderer files is not usable: make the release again")
+    for f in extras:
+        name = f.get("Name") if isinstance(f, dict) else None
+        if not usable_name(name):
+            sys.exit(f"the signed manifest lists a renderer file the managers would refuse ({name!r}): make the release again")
+        path = os.path.join(release, name)
+        if not os.path.exists(path) or sha(path) != str(f.get("Sha256") or "").lower():
+            sys.exit(f"{name} is missing or does not match the signed manifest: make the release again")
+        files.append(path)
     if not os.path.exists(os.path.join(release, zip_name)):
         sys.exit(f"{zip_name} is missing from {release}")
     files = [os.path.join(release, "update.json")] + files + [os.path.join(release, zip_name)]
+    names = [os.path.basename(x).lower() for x in files]
+    if len(set(names)) != len(names):
+        sys.exit("two of the release's files have the same name: make the release again")
 
     gh = find_gh()
     if not gh:
